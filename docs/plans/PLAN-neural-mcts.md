@@ -24,8 +24,9 @@ The player switches between them at runtime. The shipped game stays pure C++
 - **Input**: 4 binary planes of 15×15 — current player's stones, opponent's stones,
   a constant "player to move" fill, and the last-move marker.
 - **Input projection**: `conv3×3(4 → C) → BN → ReLU`.
-- **Body**: `N` residual blocks (`N` ≈ 4–8), each
-  `conv3×3(C) → BN → ReLU → conv3×3(C) → BN → add-input → ReLU`, `C` ≈ 64–128.
+- **Body**: `N` residual blocks (`N` ≈ 2–4), each
+  `conv3×3(C) → BN → ReLU → conv3×3(C) → BN → add-input → ReLU`, `C` ≈ 16–32
+  (final size tuned in Stage 3 to fit the CPU inference budget).
 - **Policy head**: `conv3×3(2) → flatten → linear(2·225 → 225)` logits over cells.
 - **Value head**: `conv3×3(1) → flatten → linear(225 → 256) → ReLU → linear(256 → 1) → tanh`.
 - **Weight file** (`*.gnn`): magic `"GOMOKUNET"` + `u32` version + layout
@@ -57,10 +58,19 @@ The player switches between them at runtime. The shipped game stays pure C++
   injected trivial network (finds immediate win, blocks open four, respects budget).
 
 ### Stage 3 — Self-play + Python training
-- Headless `self_play` C++ tool: plays MCTS-vs-MCTS, emits game records
-  (board planes + policy targets + outcome) as a plain binary/text stream.
-- Python (PyTorch): training loop (cross-entropy policy, value targets from game
-  outcome), weight export to `*.gnn`, and a simple head-to-head gate vs. the
+- **Bootstrap phase (supervised pre-training, fast):** a headless C++ mode runs
+  `AlphaBetaEngine` against itself (no network, no Python) and emits games in the
+  *same* record format as self-play. The Python trainer first trains the network by
+  imitation — cross-entropy on the alpha-beta move (softened so the policy head is
+  not brittle), value from the game outcome. This starts the network at roughly
+  classic-engine strength before RL, trading cheap classic games for expensive
+  self-play games (alpha-beta is ~100× faster per game than MCTS self-play).
+- **Self-play RL:** headless `self_play` C++ tool: MCTS-vs-MCTS, emitting records
+  (board planes + visit-count policy targets + outcome) as a plain binary/text
+  stream. Reuses the same record schema as the bootstrap, so the trainer consumes
+  both identically.
+- Python (PyTorch): SL then RL training loop (cross-entropy policy, value targets
+  from game outcome), weight export to `*.gnn`, and a head-to-head gate vs. the
   classic engine. The C++-vs-PyTorch gate is a tolerance comparison (relative
   1e-4), not bit-for-bit: accumulation order and `std::tanh`/`exp` differ by a few
   ULPs.
@@ -79,6 +89,7 @@ The player switches between them at runtime. The shipped game stays pure C++
 | Hand-rolled conv/backprop correctness | Forward-only in C++ (no backprop there); backprop only in PyTorch. NN forward checked against PyTorch outputs on the same weights. |
 | CPU-only training is slow | Small net (≈0.5–2M params); self-play is the throughput gate, run it headless/multi-threaded. |
 | CPU inference cost | The trained network must stay small (channels ≤ ~32, blocks ≤ ~4) so ~1000 sims/move fits the 2 s budget; if per-expansion `Board` copies dominate, consider lazy board materialization. |
+| Imitation-only bootstrap caps strength | Keep RL after the SL bootstrap so the network can exceed the classic teacher; SL is only a warm start, not the endpoint. |
 | MCTS nondeterminism breaks reproducibility | Fixed seed → deterministic PUCT tie-breaking; determinism test for a fixed seed. |
 | Weights absent at runtime | Neural engine disabled in UI; `MctsEngine::findBestMove` throws (no silent fallback). |
 
