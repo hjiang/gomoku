@@ -1,0 +1,9 @@
+# Build artifacts
+/build/
+/result
+
+# Nix direnv
+/.direnv/
+
+# dot extension artifacts
+/.pi/
