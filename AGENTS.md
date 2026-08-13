@@ -64,6 +64,9 @@ creating ANY new source file, run `git add -N` on it before `nix build` /
 - Training-data streams from `gomoku-bootstrap`/`gomoku-selfplay` use the
   `GameRecord` binary format (`src/core/GameRecord.cpp`); the Inc 3 trainer needs
   a Python decoder for it + a round-trip test against the tools' output.
+- Inc 3's trainer shells out to the C++ `gomoku-bootstrap` / `gomoku-selfplay`
+  binaries (built in `build/`): bootstrap (SL) must come first, then `export_gnn`
+  → `gomoku-selfplay --model X.gnn` (RL self-play needs a trained model) → train …
 - Gate scripts (developer scripts, NOT ctest):
   ```bash
   cd training
