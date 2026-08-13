@@ -75,6 +75,10 @@ add_executable(gomoku-nn-eval src/tools/nn_eval.cpp)
 target_link_libraries(gomoku-nn-eval PRIVATE gomoku_core)
 target_compile_options(gomoku-nn-eval PRIVATE ${GOMOKU_WARN_FLAGS})
 
+add_executable(gomoku-headtohead src/tools/headtohead.cpp)
+target_link_libraries(gomoku-headtohead PRIVATE gomoku_core)
+target_compile_options(gomoku-headtohead PRIVATE ${GOMOKU_WARN_FLAGS})
+
 # --- GUI application (Qt 6 Widgets) --------------------------------------------
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Test)
 qt_standard_project_setup()

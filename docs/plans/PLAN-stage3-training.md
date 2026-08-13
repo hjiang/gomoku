@@ -114,6 +114,11 @@ stdlib round-trip + torch forward gates are in (see `PLAN-stage3-inc2.md`).
   developer script (not `ctest` — needs PyTorch).
 
 ### Increment 3 — Python training loop + head-to-head gate
+**Status: complete.** `training/game_record.py` (Python GameRecord decoder),
+`training/train.py` (SL→RL loop, `hardware.select_device()`, periodic `.gnn`
+export), `src/tools/headtohead.cpp` (`gomoku-headtohead`), and the
+`test_game_record.py`/`test_train.py`/`test_headtohead.py` gates are in (see
+`PLAN-stage3-inc3.md`).
 - `training/train.py`: SL (cross-entropy on softened policy + MSE on value) then
   RL (cross-entropy on visit counts + MSE on value, self-play every N steps),
   periodic `.gnn` export.

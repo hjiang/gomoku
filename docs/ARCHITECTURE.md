@@ -107,6 +107,10 @@ indicator is shown while the worker runs.
   (developer tooling only; link `gomoku_core`, never installed). The first
   parses a `.gnn` and dumps every tensor in file order; the second runs
   `NeuralNet::evaluate` on 900 input planes and prints logits + value.
+- `gomoku-headtohead` — Stage 3 head-to-head gate tool (developer tooling
+  only; link `gomoku_core`, never installed). Plays the neural (MCTS) engine
+  against the classic (alpha-beta) engine at Classic-Hard strength and prints
+  the win/loss/draw score.
 - `CMAKE_EXPORT_COMPILE_COMMANDS=ON` for editor/clangd integration.
 
 ## Testing strategy
@@ -132,9 +136,14 @@ PyTorch side is a `uv`-managed project (`training/pyproject.toml`, venv lives in
 | `export_gnn.py` | `export_gnn(model) -> bytes` + `--out` CLI. Reads tensors by **explicit attribute access** in the exact `Weights.cpp` order and writes little-endian f32 `.gnn`. |
 | `hardware.py` | **Stdlib-only** hardware-aware torch selection: `detect_gpu()` (via `nvidia-smi`), `torch_index_url()` (CPU vs the highest compatible CUDA index), `select_device()` (runtime `cuda`/`cpu`). No torch import at module top — the sync script uses it before torch is installed. |
 | `scripts/sync.sh` | **The one install entry point**: detects the machine (CPU vs NVIDIA) and runs `uv sync --index <torch-index> --index-strategy first-index`. CPU boxes get the small CPU wheel; GPU boxes get a compatible CUDA wheel. `uv.lock` is **untracked** (it encodes one hardware's torch and differs per machine). |
+| `game_record.py` | **Stdlib-only** Python decoder for the GameRecord binary stream (mirrors `src/core/GameRecord.cpp`): magic `GOMOKUREC`, u32 version=1, then per game `u32 numPositions` + per position `f32 planes[900] + f32 policy[225] + f32 value`. `decode_stream`/`decode_file`; `encode_stream` exists only for the round-trip gate. |
+| `train.py` | **SL→RL training loop**: bootstrap records (label-smoothed policy CE + value MSE), export `.gnn`, then repeated `gomoku-selfplay --model <gnn>` + RL training (visit-count policy CE + value MSE), with periodic `.gnn` export. Uses `hardware.select_device()` for the runtime device; the model is kept in memory (never reloaded from `.gnn`). |
 | `tests/test_hardware.py` | **Hermetic** tests for `hardware.py`: injected `GPUInfo` + fake `nvidia-smi` runs (no GPU/network/torch needed for the mapping logic). |
 | `tests/test_gnn_roundtrip.py` | **Stdlib-only round-trip gate**: writes a `.gnn` with known values at known offsets (via `gnn_format`), checks the raw bytes, then runs `gomoku-dump-weights` and asserts the C++ loader reports identical values. |
 | `tests/test_forward.py` | **C++↔PyTorch forward gate** (needs torch): random `GomokuNet`, export → `gomoku-nn-eval`, compare all 225 logits + value within rel 1e-4 (abs floor 1e-5). Stays on CPU (it compares against the CPU C++ engine). Developer script, not `ctest`. |
+| `tests/test_game_record.py` | **GameRecord decoder gate** (stdlib-only): hermetic decode of struct-built bytes + malformed rejection, `encode∘decode` round-trip, and integration against real `gomoku-bootstrap` output (well-formedness). |
+| `tests/test_train.py` | **Hermetic torch test** of the pure `train.py` helpers: `records_to_tensors` shapes, distribution-target cross-entropy, and that an optimizer step changes a parameter. No C++ tools. |
+| `tests/test_headtohead.py` | **Head-to-head gate driver**: runs `gomoku-headtohead` and reports the neural engine's win rate vs Classic-Hard alpha-beta; report-only unless `--min-winrate` is set (Increment 4 turns on the threshold). |
 
 Gate commands (from `training/`):
 
@@ -144,6 +153,19 @@ uv run python tests/test_hardware.py                 # hermetic, no torch needed
 uv run python tests/test_index_resolve.py            # network-gated: every torch index resolves
 uv run python tests/test_gnn_roundtrip.py --tool ../build/gomoku-dump-weights  # stdlib only
 uv run python tests/test_forward.py --tool ../build/gomoku-nn-eval        # needs torch
+uv run python tests/test_game_record.py --tool ../build/gomoku-bootstrap  # decoder gate
+uv run python tests/test_train.py                     # hermetic torch helpers
+uv run python tests/test_headtohead.py --tool ../build/gomoku-headtohead \
+    --model <model.gnn> --games N                     # head-to-head vs classic engine
+```
+
+Training run (SL then RL):
+
+```bash
+uv run python train.py \
+    --bootstrap-tool ../build/gomoku-bootstrap \
+    --selfplay-tool ../build/gomoku-selfplay \
+    --outdir .pi/training --sl-games 200 --rl-iters 3
 ```
 
 Runtime device selection: training code should use `hardware.select_device()`
@@ -178,7 +200,8 @@ gomoku/
 │   │   ├── bootstrap.cpp                         (Stage 3: alpha-beta self-play → records)
 │   │   ├── self_play.cpp                         (Stage 3: MCTS self-play → records)
 │   │   ├── dump_weights.cpp                      (Stage 3: .gnn → tensor dump, round-trip gate)
-│   │   └── nn_eval.cpp                           (Stage 3: .gnn + planes → forward pass)
+│   │   ├── nn_eval.cpp                           (Stage 3: .gnn + planes → forward pass)
+│   │   └── headtohead.cpp                        (Stage 3: neural vs classic engine gate)
 │   ├── ui/
 │   │   ├── MainWindow.hpp / MainWindow.cpp
 │   │   ├── BoardWidget.hpp / BoardWidget.cpp
@@ -189,9 +212,14 @@ gomoku/
 │   ├── gnn_format.py                            (.gnn layout source of truth, stdlib-only)
 │   ├── model.py                                 (PyTorch GomokuNet)
 │   ├── export_gnn.py                            (.gnn exporter)
+│   ├── game_record.py                           (GameRecord stream decoder, stdlib-only)
+│   ├── train.py                                 (SL→RL training loop)
 │   └── tests/
 │       ├── test_gnn_roundtrip.py                (stdlib round-trip gate)
-│       └── test_forward.py                      (torch forward gate)
+│       ├── test_forward.py                      (torch forward gate)
+│       ├── test_game_record.py                  (GameRecord decoder gate)
+│       ├── test_train.py                        (hermetic train.py helpers)
+│       └── test_headtohead.py                   (neural-vs-classic gate driver)
 └── tests/
     ├── test_board.cpp
     ├── test_windetector.cpp
