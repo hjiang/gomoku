@@ -30,6 +30,8 @@ add_library(gomoku_core STATIC
   src/core/BoardEncoder.cpp
   src/core/Weights.cpp
   src/core/NeuralNet.cpp
+  src/core/GameRecord.cpp
+  src/core/SelfPlay.cpp
 )
 target_include_directories(gomoku_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(gomoku_core PRIVATE ${GOMOKU_WARN_FLAGS})
@@ -47,12 +49,23 @@ add_executable(gomoku_tests
   tests/test_engine_dispatch.cpp
   tests/test_neural.cpp
   tests/test_mcts.cpp
+  tests/test_game_record.cpp
+  tests/test_selfplay.cpp
 )
 target_link_libraries(gomoku_tests PRIVATE gomoku_core Catch2::Catch2WithMain)
 target_compile_options(gomoku_tests PRIVATE ${GOMOKU_WARN_FLAGS})
 
 include(CTest)
 catch_discover_tests(gomoku_tests)
+
+# --- Headless training-data tools (developer tooling, never installed) --------
+add_executable(gomoku-bootstrap src/tools/bootstrap.cpp)
+target_link_libraries(gomoku-bootstrap PRIVATE gomoku_core)
+target_compile_options(gomoku-bootstrap PRIVATE ${GOMOKU_WARN_FLAGS})
+
+add_executable(gomoku-selfplay src/tools/self_play.cpp)
+target_link_libraries(gomoku-selfplay PRIVATE gomoku_core)
+target_compile_options(gomoku-selfplay PRIVATE ${GOMOKU_WARN_FLAGS})
 
 # --- GUI application (Qt 6 Widgets) --------------------------------------------
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Test)

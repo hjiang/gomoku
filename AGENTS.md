@@ -8,7 +8,7 @@ toolchain. See `docs/REQUIREMENTS.md`, `docs/ARCHITECTURE.md`, `docs/plans/PLAN.
 ```bash
 nix develop -c cmake -S . -B build -G Ninja
 nix develop -c cmake --build build       # -Wall -Wextra -Werror on all targets
-nix develop -c ctest --test-dir build    # 62 tests: 61 Catch2 + 1 Qt Test
+nix develop -c ctest --test-dir build    # 75 tests: 74 Catch2 + 1 Qt Test
 nix flake check                          # builds the package (checkPhase = ctest)
 nix run .#
 ```

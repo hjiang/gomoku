@@ -43,10 +43,12 @@ implements game logic. This boundary is enforced by the CMake target graph
 | `Evaluator` | Static board score = sum of pattern scores for Black minus White, scanned in all 4 directions. |
 | `SearchEngine` | **Facade**: `findBestMove(board, player, params) → Move`, dispatching on `params.engine`. `difficulty(level)` maps to depth/time (Classic) and simulation count (Neural). |
 | `AlphaBetaEngine` | The original search: negamax with alpha-beta pruning, iterative deepening, candidate-move generation (only cells within Chebyshev distance 2 of an existing stone), and an optional time budget. |
-| `MctsEngine` | Monte-Carlo tree search (PUCT) guided by a trained policy/value network. **Requires a loaded model**; throws if none is loaded. |
+| `MctsEngine` | Monte-Carlo tree search (PUCT) guided by a trained policy/value network. **Requires a loaded model**; throws if none is loaded. `findBestMove` is deterministic; `selfPlay` adds root Dirichlet noise and returns the root visit-count policy target for training. |
 | `NeuralNet` | Forward-only convolutional residual network (policy + value heads), pure C++ float32, no external deps. |
 | `BoardEncoder` | Maps a `Board` to the input tensor planes (own/opponent stones, to-move, last-move marker). |
 | `Weights` | Loads the `*.gnn` weight file (magic + version + layout + raw f32 tensors). |
+| `GameRecord` | Training-record structs (`PositionRecord` = planes + policy + value, `GameRecord` = ordered positions) and the binary `encodeStream`/`decodeStream` plus `labelSmoothedPolicy`. The byte format is the contract shared with the Python trainer (see `docs/plans/PLAN-stage3-training.md`). |
+| `SelfPlay` | Headless game generation: `generateBootstrapGame` (AlphaBeta vs AlphaBeta, label-smoothed policy) and `generateSelfPlayGame` (MCTS vs MCTS via `MctsEngine::selfPlay`, visit-count policy) emit `GameRecord`s for supervised and RL training. |
 
 ### Search engines (switchable)
 `SearchEngine::findBestMove` is a **facade** that selects an engine via
@@ -68,8 +70,8 @@ implements game logic. This boundary is enforced by the CMake target graph
   (`SearchParams::mctsSimulations`).
 - Each leaf is evaluated by `NeuralNet` (policy prior over 225 moves + value in
   [−1, 1]); the board is encoded by `BoardEncoder`.
-- Deterministic (no root noise and no RNG in play); ties break in row-major order.
-  Dirichlet noise is deferred to Stage 3 self-play.
+- Deterministic `findBestMove` (no root noise); `selfPlay` mixes root Dirichlet
+  noise into the priors and returns the visit-count policy target for training.
 - **No heuristic fallback**: `MctsEngine::findBestMove` throws if no model is loaded
   (`isModelAvailable()` is false), and the UI disables the Neural option.
 
@@ -99,6 +101,8 @@ indicator is shown while the worker runs.
 - `gomoku_core` — `STATIC` library from `src/core`, C++23, `-Wall -Wextra`.
 - `gomoku` — Qt Widgets executable linking `gomoku_core`; `find_package(Qt6 COMPONENTS Widgets)`.
 - `gomoku_tests` — Catch2 test executable linking `gomoku_core`; registered with CTest.
+- `gomoku-bootstrap`, `gomoku-selfplay` — headless training-data tools (Stage 3,
+  developer tooling only; link `gomoku_core`, never installed).
 - `CMAKE_EXPORT_COMPILE_COMMANDS=ON` for editor/clangd integration.
 
 ## Testing strategy
@@ -132,7 +136,12 @@ gomoku/
 │   │   ├── MctsEngine.hpp / MctsEngine.cpp
 │   │   ├── NeuralNet.hpp / NeuralNet.cpp         (Stage 2)
 │   │   ├── BoardEncoder.hpp / BoardEncoder.cpp   (Stage 2)
-│   │   └── Weights.hpp / Weights.cpp             (Stage 2)
+│   │   ├── Weights.hpp / Weights.cpp             (Stage 2)
+│   │   ├── GameRecord.hpp / GameRecord.cpp       (Stage 3)
+│   │   └── SelfPlay.hpp / SelfPlay.cpp           (Stage 3)
+│   ├── tools/
+│   │   ├── bootstrap.cpp                         (Stage 3: alpha-beta self-play → records)
+│   │   └── self_play.cpp                         (Stage 3: MCTS self-play → records)
 │   ├── ui/
 │   │   ├── MainWindow.hpp / MainWindow.cpp
 │   │   ├── BoardWidget.hpp / BoardWidget.cpp
@@ -142,5 +151,10 @@ gomoku/
     ├── test_board.cpp
     ├── test_windetector.cpp
     ├── test_evaluator.cpp
-    └── test_engine.cpp
+    ├── test_engine.cpp
+    ├── test_engine_dispatch.cpp
+    ├── test_neural.cpp
+    ├── test_mcts.cpp
+    ├── test_game_record.cpp      (Stage 3)
+    └── test_selfplay.cpp         (Stage 3)
 ```
