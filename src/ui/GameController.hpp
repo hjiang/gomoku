@@ -44,7 +44,7 @@ class GameController : public QObject {
 
   Board board_;
   State state_ = State::WaitingForPlayer;
-  int difficultyLevel_ = 1;
+  int difficultyLevel_ = 2;  // 0 = Easy, 1 = Medium, 2 = Hard (default)
   std::thread aiThread_;
   // Bumped on the UI thread for every new search / new game; a queued AI
   // result is applied only if its captured epoch still matches.

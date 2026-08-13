@@ -28,7 +28,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   difficulty_ = new QComboBox(toolbar);
   difficulty_->addItems({QStringLiteral("Easy"), QStringLiteral("Medium"),
                          QStringLiteral("Hard")});
-  difficulty_->setCurrentIndex(1);
+  difficulty_->setCurrentIndex(2);
   toolbar->addWidget(difficulty_);
 
   status_ = new QLabel(QStringLiteral("Your turn (Black)."));
