@@ -14,8 +14,8 @@ nix run .#
 ```
 
 ## Nix + git gotcha (important)
-The flake source is the **git-tracked** file set. The repo has no commits, so a
-new file is invisible to `nix build` until registered:
+The flake source is the **git-tracked** file set, so a new file is invisible to
+`nix build` / `nix flake check` until registered with intent-to-add:
 ```bash
 git add -N path/to/new/file    # intent-to-add; makes `git ls-files` show it
 ```
@@ -45,6 +45,24 @@ creating ANY new source file, run `git add -N` on it before `nix build` /
   (`#include <Q...>` is forbidden there) so they stay Catch2-hermetic.
 - AI runs on a background thread over a `Board` snapshot; results return via
   `Qt::QueuedConnection` and are dropped if the `aiEpoch_` no longer matches.
+
+## Stage 3 training toolchain (Python, `training/`)
+- `training/` is a `uv` project (`[tool.uv] package = false`), venv at
+  `training/.venv` (gitignored + flake-excluded). Deps: torch, numpy.
+- **torch on PyPI pulls CUDA packages (~4.6 GB venv).** For CPU-only training use
+  `uv sync --index-url https://download.pytorch.org/whl/cpu` (Inc 3+).
+- `.gnn` byte layout: `src/core/Weights.cpp` is the source of truth; Python
+  mirror is `training/gnn_format.py` (stdlib-only, **encode only** — add a decoder
+  if Inc 3 needs to load a `.gnn` back into PyTorch).
+- Training-data streams from `gomoku-bootstrap`/`gomoku-selfplay` use the
+  `GameRecord` binary format (`src/core/GameRecord.cpp`); the Inc 3 trainer needs
+  a Python decoder for it + a round-trip test against the tools' output.
+- Gate scripts (developer scripts, NOT ctest):
+  ```bash
+  cd training && uv sync
+  uv run python tests/test_gnn_roundtrip.py --tool ../build/gomoku-dump-weights  # stdlib-only
+  uv run python tests/test_forward.py --tool ../build/gomoku-nn-eval             # needs torch
+  ```
 
 ## Workflow
 
