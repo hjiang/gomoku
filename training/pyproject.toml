@@ -2,9 +2,13 @@
 name = "gomoku-training"
 version = "0.1.0"
 description = "PyTorch model + .gnn exporter for the gomoku neural engine (Stage 3 training toolchain)"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
-    "torch",
+    # Floor only: the exact wheel (CPU vs CUDA) is chosen per machine by
+    # training/scripts/sync.sh; uv.lock is untracked because it encodes one
+    # hardware's torch. Index -> torch: cu130 -> 2.13.0, cu128 -> 2.11.0,
+    # cu118 -> 2.7.1, cpu -> 2.13.0. The floor (2.7) matches cu118.
+    "torch>=2.7",
     "numpy",
 ]
 

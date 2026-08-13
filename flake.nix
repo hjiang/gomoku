@@ -53,6 +53,7 @@
                   ".venv"
                   "venv"
                   "__pycache__"
+                  "uv.lock"
                 ];
                 isGenerated =
                   type == "regular"

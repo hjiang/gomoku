@@ -34,6 +34,8 @@ def main():
     args = parser.parse_args()
 
     torch.manual_seed(20260813)
+    # This gate compares against the C++ engine, which runs on CPU only, so
+    # PyTorch must stay on CPU here regardless of host hardware (never .to("cuda")).
     net = model_mod.GomokuNet(num_blocks=N_BLOCKS, channels=N_CHANNELS)
     # Small deterministic random weights keep activations ~O(1) (a real trained
     # network lives in this range). With magnitudes ~1e4 float32 accumulation

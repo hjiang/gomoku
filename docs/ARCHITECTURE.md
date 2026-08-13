@@ -130,16 +130,25 @@ PyTorch side is a `uv`-managed project (`training/pyproject.toml`, venv lives in
 | `gnn_format.py` | **Stdlib-only** single Python source of truth for the `.gnn` byte layout: magic/version/header, ordered tensor spec (mirroring `Weights.cpp`), `serialize`/`pack_f32s`/`tensor_offsets`. No torch import. |
 | `model.py` | `GomokuNet` (default `num_blocks=4`, `channels=16`): input conv+BN+ReLU, `num_blocks` residual blocks, policy head (conv2 → flatten 450 → linear → 225 logits), value head (conv1 → flatten 225 → linear 256 → ReLU → linear 1 → tanh). BatchNorm `eps=1e-5`, `track_running_stats=True`. |
 | `export_gnn.py` | `export_gnn(model) -> bytes` + `--out` CLI. Reads tensors by **explicit attribute access** in the exact `Weights.cpp` order and writes little-endian f32 `.gnn`. |
+| `hardware.py` | **Stdlib-only** hardware-aware torch selection: `detect_gpu()` (via `nvidia-smi`), `torch_index_url()` (CPU vs the highest compatible CUDA index), `select_device()` (runtime `cuda`/`cpu`). No torch import at module top — the sync script uses it before torch is installed. |
+| `scripts/sync.sh` | **The one install entry point**: detects the machine (CPU vs NVIDIA) and runs `uv sync --index <torch-index> --index-strategy first-index`. CPU boxes get the small CPU wheel; GPU boxes get a compatible CUDA wheel. `uv.lock` is **untracked** (it encodes one hardware's torch and differs per machine). |
+| `tests/test_hardware.py` | **Hermetic** tests for `hardware.py`: injected `GPUInfo` + fake `nvidia-smi` runs (no GPU/network/torch needed for the mapping logic). |
 | `tests/test_gnn_roundtrip.py` | **Stdlib-only round-trip gate**: writes a `.gnn` with known values at known offsets (via `gnn_format`), checks the raw bytes, then runs `gomoku-dump-weights` and asserts the C++ loader reports identical values. |
-| `tests/test_forward.py` | **C++↔PyTorch forward gate** (needs torch): random `GomokuNet`, export → `gomoku-nn-eval`, compare all 225 logits + value within rel 1e-4 (abs floor 1e-5). Developer script, not `ctest`. |
+| `tests/test_forward.py` | **C++↔PyTorch forward gate** (needs torch): random `GomokuNet`, export → `gomoku-nn-eval`, compare all 225 logits + value within rel 1e-4 (abs floor 1e-5). Stays on CPU (it compares against the CPU C++ engine). Developer script, not `ctest`. |
 
 Gate commands (from `training/`):
 
 ```bash
-uv sync
+scripts/sync.sh                                      # hardware-aware torch install
+uv run python tests/test_hardware.py                 # hermetic, no torch needed
+uv run python tests/test_index_resolve.py            # network-gated: every torch index resolves
 uv run python tests/test_gnn_roundtrip.py --tool ../build/gomoku-dump-weights  # stdlib only
 uv run python tests/test_forward.py --tool ../build/gomoku-nn-eval        # needs torch
 ```
+
+Runtime device selection: training code should use `hardware.select_device()`
+(`cuda` when `torch.cuda.is_available()`, else `cpu`; it warns if a GPU is
+present but the installed torch build has no CUDA).
 
 ## Project layout
 ```

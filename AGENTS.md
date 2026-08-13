@@ -19,7 +19,9 @@ The flake source is the **git-tracked** file set, so a new file is invisible to
 ```bash
 git add -N path/to/new/file    # intent-to-add; makes `git ls-files` show it
 ```
-Nothing is ever actually staged (`git diff --cached` must stay empty). After
+Nothing is ever actually staged (`git diff --cached` must stay empty). The
+one-time `git rm --cached training/uv.lock` (untracking the hardware-specific
+uv lock) is the sole allowed staged change; it is committed immediately. After
 creating ANY new source file, run `git add -N` on it before `nix build` /
 `nix flake check`, or the sandbox build fails with "Cannot find source file".
 
@@ -49,8 +51,13 @@ creating ANY new source file, run `git add -N` on it before `nix build` /
 ## Stage 3 training toolchain (Python, `training/`)
 - `training/` is a `uv` project (`[tool.uv] package = false`), venv at
   `training/.venv` (gitignored + flake-excluded). Deps: torch, numpy.
-- **torch on PyPI pulls CUDA packages (~4.6 GB venv).** For CPU-only training use
-  `uv sync --index-url https://download.pytorch.org/whl/cpu` (Inc 3+).
+- **Install torch with `training/scripts/sync.sh`** — it auto-detects the machine
+  (CPU vs NVIDIA) and picks the right wheel index (small CPU build, or a CUDA
+  build compatible with the driver). Bare `uv sync` pulls the default PyPI torch
+  (~4.6 GB CUDA deps); `uv.lock` is **untracked** because it encodes one
+  hardware's torch. At runtime use `hardware.select_device()` (cuda/cpu).
+  Hardware logic: `training/hardware.py` (stdlib-only, hermetic test in
+  `tests/test_hardware.py`).
 - `.gnn` byte layout: `src/core/Weights.cpp` is the source of truth; Python
   mirror is `training/gnn_format.py` (stdlib-only, **encode only** — add a decoder
   if Inc 3 needs to load a `.gnn` back into PyTorch).
@@ -59,10 +66,14 @@ creating ANY new source file, run `git add -N` on it before `nix build` /
   a Python decoder for it + a round-trip test against the tools' output.
 - Gate scripts (developer scripts, NOT ctest):
   ```bash
-  cd training && uv sync
+  cd training
+  ./scripts/sync.sh                                   # hardware-aware torch install
+  uv run python tests/test_hardware.py                # hermetic, no torch needed
   uv run python tests/test_gnn_roundtrip.py --tool ../build/gomoku-dump-weights  # stdlib-only
   uv run python tests/test_forward.py --tool ../build/gomoku-nn-eval             # needs torch
   ```
+- When the CUDA index list changes, run `uv run python tests/test_index_resolve.py`
+  (network-gated: dry-resolves every listed torch index via `uv sync --dry-run`).
 
 ## Workflow
 
