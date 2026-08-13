@@ -28,10 +28,15 @@ class MainWindow : public QMainWindow {
  private:
   void onBoardChanged();
   void onStatusChanged(const QString& text);
+  // Reads GOMOKU_MODEL_PATH (if set) and loads the .gnn model into
+  // MctsEngine so the Neural engine becomes available. Call before the
+  // engine combo is built.
+  void loadModelFromEnv();
 
   BoardWidget* boardWidget_ = nullptr;
   GameController* controller_ = nullptr;
   QComboBox* difficulty_ = nullptr;
+  QComboBox* engine_ = nullptr;
   QLabel* status_ = nullptr;
 };
 

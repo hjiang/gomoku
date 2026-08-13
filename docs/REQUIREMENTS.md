@@ -10,6 +10,8 @@ a computer opponent on a local board. No network access, no accounts, no server.
   color in a row, column, or diagonal wins. No forbidden moves for either side.
 - Standard **15×15** board as the default; board size is a compile-time constant so
   it could be raised later (e.g. 19×19) with minimal change.
+- Two selectable AI engines: a **Classic** alpha-beta engine over a pattern
+  heuristic, and a **Neural** engine (MCTS guided by a trained network).
 
 ## Functional requirements
 
@@ -27,6 +29,9 @@ a computer opponent on a local board. No network access, no accounts, no server.
 | FR10 | The last move is visually marked; a status bar shows whose turn it is. |
 | FR11 | The UI stays responsive while the AI is thinking (AI runs off the UI thread). |
 | FR12 | The game runs fully offline with no network calls of any kind. |
+| FR13 | The player can choose the AI engine: **Classic** (pattern heuristic + alpha-beta) or **Neural** (MCTS + trained network). |
+| FR14 | The **Neural** engine requires a trained model; without one it is unavailable (disabled in the UI) rather than silently falling back to the heuristic. |
+| FR15 | The shipped game stays fully offline and pure C++; only the offline training pipeline (developer tooling, not part of the game binary) may use Python. |
 
 ## Non-functional requirements
 
@@ -38,17 +43,19 @@ a computer opponent on a local board. No network access, no accounts, no server.
 | NFR4 | **Testability**: all game rules and the AI live in a Qt-free core library with unit tests. |
 | NFR5 | **Responsiveness**: hard-difficulty AI returns a move within a bounded time (target ≤ 2 s). |
 | NFR6 | No compiler warnings under `-Wall -Wextra` (and `-Werror` in CI checks). |
+| NFR7 | The shipped binary is pure C++ (no Python, no network, no model training at runtime). Python (PyTorch) is allowed only for the offline training toolchain. |
 
 ## Constraints & assumptions
 - Freestyle gomoku: an "overline" (6+ in a row) **counts as a win**.
-- Single human player; the AI is a deterministic search (no learned model, no network).
+- Single human player. The Classic AI is a deterministic alpha-beta search over a
+  pattern heuristic; the Neural AI is a trained network driving deterministic MCTS.
 - Target platform: Linux (NixOS/nix on any Linux); the code itself is portable C++.
 
 ## Out of scope (non-goals)
 - Renju tournament rules / forbidden moves.
 - Online play, multiplayer, leaderboards, or persistence of game history.
 - Sounds, animations beyond the minimum, theming engine.
-- Reinforcement-learning / neural-network AI.
+- Training the network at runtime (training is offline, developer-side only).
 - Mobile or web deployment.
 
 ## Acceptance criteria
@@ -57,3 +64,5 @@ a computer opponent on a local board. No network access, no accounts, no server.
 3. `nix run .` launches the game window and a full game can be played to a win/draw.
 4. On the hardest difficulty, the AI blocks an obvious open four and completes its own win.
 5. The UI never freezes during the AI's turn.
+6. The engine selector offers Classic and Neural; Neural is disabled until a trained model is present.
+7. With a trained model loaded, the Neural engine plays a full game offline.

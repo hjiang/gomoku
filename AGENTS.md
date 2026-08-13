@@ -8,7 +8,7 @@ toolchain. See `docs/REQUIREMENTS.md`, `docs/ARCHITECTURE.md`, `docs/plans/PLAN.
 ```bash
 nix develop -c cmake -S . -B build -G Ninja
 nix develop -c cmake --build build       # -Wall -Wextra -Werror on all targets
-nix develop -c ctest --test-dir build    # 31 tests: 30 Catch2 + 1 Qt Test
+nix develop -c ctest --test-dir build    # 62 tests: 61 Catch2 + 1 Qt Test
 nix flake check                          # builds the package (checkPhase = ctest)
 nix run .#
 ```
@@ -37,7 +37,7 @@ creating ANY new source file, run `git add -N` on it before `nix build` /
 - `GameController` joins the AI worker thread on the UI thread on New Game /
   shutdown, freezing the UI for up to `timeBudgetMs` (≤ 2 s at Hard). Correct
   and race-free; avoided a detach + `QPointer` rework (use-after-free risk).
-- `SearchEngine::orderMoves` copies the `Board` per candidate move at every
+- `AlphaBetaEngine::orderMoves` copies the `Board` per candidate move at every
   node; the time budget caps the cost. Could probe with in-place place/undo.
 
 ## Conventions
@@ -45,3 +45,9 @@ creating ANY new source file, run `git add -N` on it before `nix build` /
   (`#include <Q...>` is forbidden there) so they stay Catch2-hermetic.
 - AI runs on a background thread over a `Board` snapshot; results return via
   `Qt::QueuedConnection` and are dropped if the `aiEpoch_` no longer matches.
+
+## Workflow
+
+- For any significant feature, use subagents: the worker to implement (from a
+  plan in docs/plans/), then the reviewer and the worker in a review-revise loop
+  until satisfied.

@@ -25,6 +25,11 @@ add_library(gomoku_core STATIC
   src/core/PatternTable.cpp
   src/core/Evaluator.cpp
   src/core/SearchEngine.cpp
+  src/core/AlphaBetaEngine.cpp
+  src/core/MctsEngine.cpp
+  src/core/BoardEncoder.cpp
+  src/core/Weights.cpp
+  src/core/NeuralNet.cpp
 )
 target_include_directories(gomoku_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(gomoku_core PRIVATE ${GOMOKU_WARN_FLAGS})
@@ -39,6 +44,9 @@ add_executable(gomoku_tests
   tests/test_windetector.cpp
   tests/test_evaluator.cpp
   tests/test_engine.cpp
+  tests/test_engine_dispatch.cpp
+  tests/test_neural.cpp
+  tests/test_mcts.cpp
 )
 target_link_libraries(gomoku_tests PRIVATE gomoku_core Catch2::Catch2WithMain)
 target_compile_options(gomoku_tests PRIVATE ${GOMOKU_WARN_FLAGS})

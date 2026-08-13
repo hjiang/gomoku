@@ -24,9 +24,13 @@ class GameController : public QObject {
   [[nodiscard]] const Board& board() const { return board_; }
   [[nodiscard]] Player humanPlayer() const { return Player::Black; }
   [[nodiscard]] Player aiPlayer() const { return Player::White; }
+  [[nodiscard]] EngineKind engine() const { return engine_; }
 
   void startNewGame();
   void setDifficulty(int level);  // 0 = Easy, 1 = Medium, 2 = Hard
+  // 0 = AlphaBeta (Classic), 1 = Mcts (Neural). Neural is rejected (stays
+  // Classic) when no trained model is loaded.
+  void setEngine(int index);
   void undoLastMove();
 
  signals:
@@ -45,6 +49,7 @@ class GameController : public QObject {
   Board board_;
   State state_ = State::WaitingForPlayer;
   int difficultyLevel_ = 2;  // 0 = Easy, 1 = Medium, 2 = Hard (default)
+  EngineKind engine_ = EngineKind::AlphaBeta;  // Classic by default
   std::thread aiThread_;
   // Bumped on the UI thread for every new search / new game; a queued AI
   // result is applied only if its captured epoch still matches.

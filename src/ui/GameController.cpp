@@ -1,5 +1,6 @@
 #include "ui/GameController.hpp"
 
+#include "core/MctsEngine.hpp"
 #include "core/WinDetector.hpp"
 
 #include <QMetaObject>
@@ -31,6 +32,15 @@ void GameController::setDifficulty(int level) {
     return;
   }
   difficultyLevel_ = level;
+}
+
+void GameController::setEngine(int index) {
+  // Neural requires a trained model. The UI already disables the option when
+  // none is loaded; this guard is defense-in-depth so a programmatic request
+  // for Neural can never reach MctsEngine::findBestMove on the worker thread
+  // (which throws without a model and would terminate the process).
+  engine_ = (index == 1 && MctsEngine::isModelAvailable()) ? EngineKind::Mcts
+                                                           : EngineKind::AlphaBeta;
 }
 
 void GameController::undoLastMove() {
@@ -95,7 +105,8 @@ void GameController::requestAiMove() {
   emit boardChanged();
 
   const Board snapshot = board_;
-  const SearchParams params = SearchEngine::difficulty(difficultyLevel_);
+  SearchParams params = SearchEngine::difficulty(difficultyLevel_);
+  params.engine = engine_;
   const int epoch = ++aiEpoch_;
   if (aiThread_.joinable()) {
     aiThread_.join();

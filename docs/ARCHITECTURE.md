@@ -23,7 +23,8 @@
 ┌───────────────▼───────────────────────────────────────────┐
 │  Core engine (Qt-free, header-only-friendly static lib)   │
 │  Board · WinDetector · Evaluator · PatternTable           │
-│  SearchEngine (negamax + alpha-beta + iterative deepening)│
+│  SearchEngine (facade) → AlphaBetaEngine | MctsEngine     │
+│  NeuralNet · BoardEncoder · Weights (Neural engine)       │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -40,9 +41,18 @@ implements game logic. This boundary is enforced by the CMake target graph
 | `WinDetector` | Pure function: `winnerOf(board, lastMove) → Player`. Scans the 4 directions through the last stone, counting consecutive same-color stones. `findWinningLine()` returns the 5 cells for UI highlighting. |
 | `PatternTable` | Maps local stone patterns (e.g. `_XXXX_`, `_XXX_`, `_OOO_`) to scores, built once at startup. |
 | `Evaluator` | Static board score = sum of pattern scores for Black minus White, scanned in all 4 directions. |
-| `SearchEngine` | `findBestMove(board, player, params) → Move`. Negamax with alpha-beta pruning, iterative deepening, candidate-move generation (only cells within Chebyshev distance 2 of an existing stone), and an optional time budget. Difficulty = depth + time limit. |
+| `SearchEngine` | **Facade**: `findBestMove(board, player, params) → Move`, dispatching on `params.engine`. `difficulty(level)` maps to depth/time (Classic) and simulation count (Neural). |
+| `AlphaBetaEngine` | The original search: negamax with alpha-beta pruning, iterative deepening, candidate-move generation (only cells within Chebyshev distance 2 of an existing stone), and an optional time budget. |
+| `MctsEngine` | Monte-Carlo tree search (PUCT) guided by a trained policy/value network. **Requires a loaded model**; throws if none is loaded. |
+| `NeuralNet` | Forward-only convolutional residual network (policy + value heads), pure C++ float32, no external deps. |
+| `BoardEncoder` | Maps a `Board` to the input tensor planes (own/opponent stones, to-move, last-move marker). |
+| `Weights` | Loads the `*.gnn` weight file (magic + version + layout + raw f32 tensors). |
 
-### Search algorithm
+### Search engines (switchable)
+`SearchEngine::findBestMove` is a **facade** that selects an engine via
+`SearchParams::engine` (`EngineKind { AlphaBeta, Mcts }`).
+
+**Classic (`AlphaBetaEngine`)** — the original deterministic search:
 - **Negamax** (single function, no separate min/max cases) with **alpha-beta pruning**.
 - **Iterative deepening**: try depth 1, 2, … up to the cap or until the time budget
   is exhausted; always keep the best move from the last completed depth.
@@ -52,6 +62,16 @@ implements game logic. This boundary is enforced by the CMake target graph
   applied at leaf nodes; a terminal win/loss gets a large ±score with depth
   adjustment (prefer faster wins / slower losses).
 - Move ordering (winning moves first, then near previous move) improves pruning.
+
+**Neural (`MctsEngine`)** — AlphaZero-style, requires a trained model:
+- **PUCT** tree search over the legal moves, with a simulation budget
+  (`SearchParams::mctsSimulations`).
+- Each leaf is evaluated by `NeuralNet` (policy prior over 225 moves + value in
+  [−1, 1]); the board is encoded by `BoardEncoder`.
+- Deterministic (no root noise and no RNG in play); ties break in row-major order.
+  Dirichlet noise is deferred to Stage 3 self-play.
+- **No heuristic fallback**: `MctsEngine::findBestMove` throws if no model is loaded
+  (`isModelAvailable()` is false), and the UI disables the Neural option.
 
 ### Contracts (examples)
 - `Board::place(Move m)`: **pre** `inBounds(m)` and `isEmpty(m)` and no current winner;
@@ -107,7 +127,12 @@ gomoku/
 │   │   ├── WinDetector.hpp / WinDetector.cpp
 │   │   ├── PatternTable.hpp / PatternTable.cpp
 │   │   ├── Evaluator.hpp / Evaluator.cpp
-│   │   └── SearchEngine.hpp / SearchEngine.cpp
+│   │   ├── SearchEngine.hpp / SearchEngine.cpp   (facade + difficulty)
+│   │   ├── AlphaBetaEngine.hpp / AlphaBetaEngine.cpp
+│   │   ├── MctsEngine.hpp / MctsEngine.cpp
+│   │   ├── NeuralNet.hpp / NeuralNet.cpp         (Stage 2)
+│   │   ├── BoardEncoder.hpp / BoardEncoder.cpp   (Stage 2)
+│   │   └── Weights.hpp / Weights.cpp             (Stage 2)
 │   ├── ui/
 │   │   ├── MainWindow.hpp / MainWindow.cpp
 │   │   ├── BoardWidget.hpp / BoardWidget.cpp

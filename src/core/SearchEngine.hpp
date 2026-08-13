@@ -7,13 +7,19 @@
 
 namespace gomoku {
 
+// Which AI search engine to run.
+enum class EngineKind { AlphaBeta, Mcts };
+
 struct SearchParams {
-  int maxDepth = 4;          // plies of search at the root
-  int timeBudgetMs = 2000;   // soft deadline; the search stops after it
-  std::uint32_t seed = 0;    // nonzero: deterministic variety in move ordering
+  int maxDepth = 4;           // plies of search at the root (AlphaBeta)
+  int timeBudgetMs = 2000;    // soft deadline; the search stops after it
+  std::uint32_t seed = 0;     // nonzero: deterministic variety in move ordering
+  EngineKind engine = EngineKind::AlphaBeta;  // which search engine to run
+  int mctsSimulations = 1000; // per-move simulation budget (Mcts)
 };
 
-// Negamax + alpha-beta + iterative deepening over candidate moves near stones.
+// Facade: dispatches to the selected engine behind a single board -> move
+// contract. See AlphaBetaEngine and MctsEngine.
 class SearchEngine {
  public:
   // Best move for `player`. Pre: board has at least one empty cell and no
