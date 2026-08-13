@@ -51,3 +51,5 @@ creating ANY new source file, run `git add -N` on it before `nix build` /
 - For any significant feature, use subagents: the worker to implement (from a
   plan in docs/plans/), then the reviewer and the worker in a review-revise loop
   until satisfied.
+- Use `uv` to manage Python dependencies, use `flake.nix` to manage other
+  dependencies including `uv` itself.

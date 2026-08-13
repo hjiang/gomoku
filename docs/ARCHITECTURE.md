@@ -103,6 +103,10 @@ indicator is shown while the worker runs.
 - `gomoku_tests` — Catch2 test executable linking `gomoku_core`; registered with CTest.
 - `gomoku-bootstrap`, `gomoku-selfplay` — headless training-data tools (Stage 3,
   developer tooling only; link `gomoku_core`, never installed).
+- `gomoku-dump-weights`, `gomoku-nn-eval` — Stage 3 round-trip-gate tools
+  (developer tooling only; link `gomoku_core`, never installed). The first
+  parses a `.gnn` and dumps every tensor in file order; the second runs
+  `NeuralNet::evaluate` on 900 input planes and prints logits + value.
 - `CMAKE_EXPORT_COMPILE_COMMANDS=ON` for editor/clangd integration.
 
 ## Testing strategy
@@ -114,6 +118,28 @@ indicator is shown while the worker runs.
 - **Hermetic**: no tests touch Qt, the filesystem, or the network.
 - The UI is kept intentionally thin and is verified manually (and via smoke launch
   in `nix run`), not by automated widget tests in the first pass.
+
+## Training toolchain (Python, `training/`)
+
+Python is allowed **for training only** — never in the shipped binary. The
+PyTorch side is a `uv`-managed project (`training/pyproject.toml`, venv lives in
+`training/.venv`, git-ignored and excluded from the Nix source filter).
+
+| File | Responsibility |
+|------|----------------|
+| `gnn_format.py` | **Stdlib-only** single Python source of truth for the `.gnn` byte layout: magic/version/header, ordered tensor spec (mirroring `Weights.cpp`), `serialize`/`pack_f32s`/`tensor_offsets`. No torch import. |
+| `model.py` | `GomokuNet` (default `num_blocks=4`, `channels=16`): input conv+BN+ReLU, `num_blocks` residual blocks, policy head (conv2 → flatten 450 → linear → 225 logits), value head (conv1 → flatten 225 → linear 256 → ReLU → linear 1 → tanh). BatchNorm `eps=1e-5`, `track_running_stats=True`. |
+| `export_gnn.py` | `export_gnn(model) -> bytes` + `--out` CLI. Reads tensors by **explicit attribute access** in the exact `Weights.cpp` order and writes little-endian f32 `.gnn`. |
+| `tests/test_gnn_roundtrip.py` | **Stdlib-only round-trip gate**: writes a `.gnn` with known values at known offsets (via `gnn_format`), checks the raw bytes, then runs `gomoku-dump-weights` and asserts the C++ loader reports identical values. |
+| `tests/test_forward.py` | **C++↔PyTorch forward gate** (needs torch): random `GomokuNet`, export → `gomoku-nn-eval`, compare all 225 logits + value within rel 1e-4 (abs floor 1e-5). Developer script, not `ctest`. |
+
+Gate commands (from `training/`):
+
+```bash
+uv sync
+uv run python tests/test_gnn_roundtrip.py --tool ../build/gomoku-dump-weights  # stdlib only
+uv run python tests/test_forward.py --tool ../build/gomoku-nn-eval        # needs torch
+```
 
 ## Project layout
 ```
@@ -141,12 +167,22 @@ gomoku/
 │   │   └── SelfPlay.hpp / SelfPlay.cpp           (Stage 3)
 │   ├── tools/
 │   │   ├── bootstrap.cpp                         (Stage 3: alpha-beta self-play → records)
-│   │   └── self_play.cpp                         (Stage 3: MCTS self-play → records)
+│   │   ├── self_play.cpp                         (Stage 3: MCTS self-play → records)
+│   │   ├── dump_weights.cpp                      (Stage 3: .gnn → tensor dump, round-trip gate)
+│   │   └── nn_eval.cpp                           (Stage 3: .gnn + planes → forward pass)
 │   ├── ui/
 │   │   ├── MainWindow.hpp / MainWindow.cpp
 │   │   ├── BoardWidget.hpp / BoardWidget.cpp
 │   │   └── GameController.hpp / GameController.cpp
 │   └── main.cpp
+├── training/                                    (Stage 3: Python training toolchain, uv-managed)
+│   ├── pyproject.toml
+│   ├── gnn_format.py                            (.gnn layout source of truth, stdlib-only)
+│   ├── model.py                                 (PyTorch GomokuNet)
+│   ├── export_gnn.py                            (.gnn exporter)
+│   └── tests/
+│       ├── test_gnn_roundtrip.py                (stdlib round-trip gate)
+│       └── test_forward.py                      (torch forward gate)
 └── tests/
     ├── test_board.cpp
     ├── test_windetector.cpp

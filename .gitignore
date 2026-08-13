@@ -7,3 +7,10 @@
 
 # dot extension artifacts
 /.pi/
+
+# Python training toolchain (uv-managed)
+.venv/
+venv/
+__pycache__/
+*.gnn
+*.rec

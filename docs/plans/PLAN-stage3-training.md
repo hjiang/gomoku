@@ -99,6 +99,9 @@ Deliverables:
   plan's definition-of-done checkboxes where applicable.
 
 ### Increment 2 — Python model + `.gnn` exporter (round-trip gate)
+**Status: complete.** `training/model.py`, `training/export_gnn.py`,
+`training/gnn_format.py`, `gomoku-dump-weights`/`gomoku-nn-eval` tools, and the
+stdlib round-trip + torch forward gates are in (see `PLAN-stage3-inc2.md`).
 - `training/model.py`: PyTorch model matching the Stage-2 architecture exactly
   (conv/Bn/ReLU shapes as in `src/core/NeuralNet.cpp`; `track_running_stats=True`,
   `eps=1e-5`).

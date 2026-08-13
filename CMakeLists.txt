@@ -67,6 +67,14 @@ add_executable(gomoku-selfplay src/tools/self_play.cpp)
 target_link_libraries(gomoku-selfplay PRIVATE gomoku_core)
 target_compile_options(gomoku-selfplay PRIVATE ${GOMOKU_WARN_FLAGS})
 
+add_executable(gomoku-dump-weights src/tools/dump_weights.cpp)
+target_link_libraries(gomoku-dump-weights PRIVATE gomoku_core)
+target_compile_options(gomoku-dump-weights PRIVATE ${GOMOKU_WARN_FLAGS})
+
+add_executable(gomoku-nn-eval src/tools/nn_eval.cpp)
+target_link_libraries(gomoku-nn-eval PRIVATE gomoku_core)
+target_compile_options(gomoku-nn-eval PRIVATE ${GOMOKU_WARN_FLAGS})
+
 # --- GUI application (Qt 6 Widgets) --------------------------------------------
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Test)
 qt_standard_project_setup()

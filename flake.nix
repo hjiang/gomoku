@@ -23,6 +23,7 @@
             qt.qtbase
             qt.wrapQtAppsHook
             catch2_3
+            uv
           ];
           # Deterministic environment for Qt6 + CMake discovery and for
           # launching the GUI from the build tree.
@@ -37,9 +38,27 @@
           version = "0.1.0";
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
+            # Also exclude the Python training venv/caches and generated
+            # training artifacts so `nix flake check` never copies gigabytes
+            # of torch or stray .gnn/.rec files into the store.
             filter = path: type:
-              let base = baseNameOf path;
-              in !(base == "build" || base == ".pi" || base == ".direnv" || base == "result" || base == ".git");
+              let
+                base = baseNameOf path;
+                excludedNames = [
+                  "build"
+                  ".pi"
+                  ".direnv"
+                  "result"
+                  ".git"
+                  ".venv"
+                  "venv"
+                  "__pycache__"
+                ];
+                isGenerated =
+                  type == "regular"
+                  && (builtins.match ".*[.]gnn$" (pkgs.lib.toLower base) != null
+                      || builtins.match ".*[.]rec$" (pkgs.lib.toLower base) != null);
+              in !(builtins.elem base excludedNames) && !isGenerated;
           };
           nativeBuildInputs = with pkgs; [ cmake ninja qt.wrapQtAppsHook ];
           buildInputs = with pkgs; [ qt.qtbase catch2_3 ];

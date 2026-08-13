@@ -1,0 +1,12 @@
+[project]
+name = "gomoku-training"
+version = "0.1.0"
+description = "PyTorch model + .gnn exporter for the gomoku neural engine (Stage 3 training toolchain)"
+requires-python = ">=3.11"
+dependencies = [
+    "torch",
+    "numpy",
+]
+
+[tool.uv]
+package = false
