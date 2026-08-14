@@ -28,10 +28,14 @@ class MainWindow : public QMainWindow {
  private:
   void onBoardChanged();
   void onStatusChanged(const QString& text);
-  // Reads GOMOKU_MODEL_PATH (if set) and loads the .gnn model into
-  // MctsEngine so the Neural engine becomes available. Call before the
-  // engine combo is built.
-  void loadModelFromEnv();
+  // Loads the .gnn model into MctsEngine so the Neural engine becomes
+  // available. Lookup order: GOMOKU_MODEL_PATH (explicit override), then a
+  // bundled model next to the binary or in the installed share/ dir. Call
+  // before the engine combo is built.
+  void loadModel();
+  // Reads `path` and parses it as a .gnn model; returns true on success.
+  // A failed load leaves any previously loaded model unchanged.
+  [[nodiscard]] static bool tryLoadModelFile(const QString& path);
 
   BoardWidget* boardWidget_ = nullptr;
   GameController* controller_ = nullptr;

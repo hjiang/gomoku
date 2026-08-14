@@ -89,7 +89,7 @@ implements game logic. This boundary is enforced by the CMake target graph
 |-----------|----------------|
 | `BoardWidget` | Custom `QWidget`; paints grid, stones, last-move marker, and winning line via `QPainter`; converts mouse clicks to board positions and emits `cellClicked(pos)`. |
 | `GameController` | `QObject` state machine (WaitingForPlayer / AiThinking / GameOver). Receives clicks, applies moves to a `Board`, triggers win/draw checks, spawns the AI search on a `std::jthread` (or `QThread`), and emits UI-update signals. |
-| `MainWindow` | Composes `BoardWidget` + menu/toolbar (New / Undo / Resign, difficulty selector) + status bar. |
+| `MainWindow` | Composes `BoardWidget` + menu/toolbar (New / Undo / Resign, difficulty selector) + status bar. Loads the Neural model at startup (see *Model shipping* below). |
 
 **Threading model:** when it is the AI's turn, `GameController` runs
 `SearchEngine::findBestMove` on a worker thread with a local copy of the board.
@@ -112,6 +112,16 @@ indicator is shown while the worker runs.
   against the classic (alpha-beta) engine at Classic-Hard strength and prints
   the win/loss/draw score.
 - `CMAKE_EXPORT_COMPILE_COMMANDS=ON` for editor/clangd integration.
+
+### Model shipping
+A trained `*.gnn` model is committed at `resources/model.gnn` and installed to
+`${CMAKE_INSTALL_DATADIR}/gomoku/model.gnn` (`share/gomoku/model.gnn`).
+`MainWindow::loadModel` enables the Neural engine at startup, in this order:
+`GOMOKU_MODEL_PATH` (explicit override) → `<applicationDirPath>/model.gnn`
+(dev, model next to the binary) → `<applicationDirPath>/../share/gomoku/model.gnn`
+(installed bundle). The `flake.nix` source filter whitelists the exact path
+`resources/model.gnn` so the model reaches the Nix store while other generated
+`*.gnn`/`*.rec` files stay excluded.
 
 ## Testing strategy
 - **Unit tests** (Catch2) cover the entire core: board placement/undo/full/draw,
@@ -137,7 +147,7 @@ PyTorch side is a `uv`-managed project (`training/pyproject.toml`, venv lives in
 | `hardware.py` | **Stdlib-only** hardware-aware torch selection: `detect_gpu()` (via `nvidia-smi`), `torch_index_url()` (CPU vs the highest compatible CUDA index), `select_device()` (runtime `cuda`/`cpu`). No torch import at module top — the sync script uses it before torch is installed. |
 | `scripts/sync.sh` | **The one install entry point**: detects the machine (CPU vs NVIDIA) and runs `uv sync --index <torch-index> --index-strategy first-index`. CPU boxes get the small CPU wheel; GPU boxes get a compatible CUDA wheel. `uv.lock` is **untracked** (it encodes one hardware's torch and differs per machine). |
 | `game_record.py` | **Stdlib-only** Python decoder for the GameRecord binary stream (mirrors `src/core/GameRecord.cpp`): magic `GOMOKUREC`, u32 version=1, then per game `u32 numPositions` + per position `f32 planes[900] + f32 policy[225] + f32 value`. `decode_stream`/`decode_file`; `encode_stream` exists only for the round-trip gate. |
-| `train.py` | **SL→RL training loop**: bootstrap records (label-smoothed policy CE + value MSE), export `.gnn`, then repeated `gomoku-selfplay --model <gnn>` + RL training (visit-count policy CE + value MSE), with periodic `.gnn` export. Uses `hardware.select_device()` for the runtime device; the model is kept in memory (never reloaded from `.gnn`). |
+| `train.py` | **SL→RL training loop**: bootstrap records (label-smoothed policy CE + value MSE), export `.gnn`, then repeated `gomoku-selfplay --model <gnn>` + RL training (visit-count policy CE + value MSE), with periodic `.gnn` export. Uses `hardware.select_device()` for the runtime device; the model is kept in memory (never reloaded from `.gnn`). `--jobs J` runs the single-threaded C++ generators as `J` parallel processes and byte-merges their `.rec` streams. |
 | `tests/test_hardware.py` | **Hermetic** tests for `hardware.py`: injected `GPUInfo` + fake `nvidia-smi` runs (no GPU/network/torch needed for the mapping logic). |
 | `tests/test_gnn_roundtrip.py` | **Stdlib-only round-trip gate**: writes a `.gnn` with known values at known offsets (via `gnn_format`), checks the raw bytes, then runs `gomoku-dump-weights` and asserts the C++ loader reports identical values. |
 | `tests/test_forward.py` | **C++↔PyTorch forward gate** (needs torch): random `GomokuNet`, export → `gomoku-nn-eval`, compare all 225 logits + value within rel 1e-4 (abs floor 1e-5). Stays on CPU (it compares against the CPU C++ engine). Developer script, not `ctest`. |
@@ -178,6 +188,8 @@ gomoku/
 ├── flake.nix
 ├── CMakeLists.txt
 ├── .gitignore
+├── resources/
+│   └── model.gnn                              (shipped trained model, ~720 KB)
 ├── docs/
 │   ├── REQUIREMENTS.md
 │   └── ARCHITECTURE.md

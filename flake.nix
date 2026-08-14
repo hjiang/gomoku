@@ -44,6 +44,7 @@
             filter = path: type:
               let
                 base = baseNameOf path;
+                rel = pkgs.lib.removePrefix (toString ./.) (toString path);
                 excludedNames = [
                   "build"
                   ".pi"
@@ -55,8 +56,13 @@
                   "__pycache__"
                   "uv.lock"
                 ];
+                # The trained model is shipped with the game, so its exact path
+                # is whitelisted even though other generated .gnn/.rec files are
+                # excluded from the source tree.
+                isBundledModel = rel == "/resources/model.gnn";
                 isGenerated =
                   type == "regular"
+                  && !isBundledModel
                   && (builtins.match ".*[.]gnn$" (pkgs.lib.toLower base) != null
                       || builtins.match ".*[.]rec$" (pkgs.lib.toLower base) != null);
               in !(builtins.elem base excludedNames) && !isGenerated;

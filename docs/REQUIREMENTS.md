@@ -30,7 +30,7 @@ a computer opponent on a local board. No network access, no accounts, no server.
 | FR11 | The UI stays responsive while the AI is thinking (AI runs off the UI thread). |
 | FR12 | The game runs fully offline with no network calls of any kind. |
 | FR13 | The player can choose the AI engine: **Classic** (pattern heuristic + alpha-beta) or **Neural** (MCTS + trained network). |
-| FR14 | The **Neural** engine requires a trained model; without one it is unavailable (disabled in the UI) rather than silently falling back to the heuristic. |
+| FR14 | The **Neural** engine requires a trained model; the game bundles a default model so Neural works out of the box, and `GOMOKU_MODEL_PATH` overrides it. Without any loadable model it is unavailable (disabled in the UI) rather than silently falling back to the heuristic. |
 | FR15 | The shipped game stays fully offline and pure C++; only the offline training pipeline (developer tooling, not part of the game binary) may use Python. |
 
 ## Non-functional requirements
@@ -64,5 +64,5 @@ a computer opponent on a local board. No network access, no accounts, no server.
 3. `nix run .` launches the game window and a full game can be played to a win/draw.
 4. On the hardest difficulty, the AI blocks an obvious open four and completes its own win.
 5. The UI never freezes during the AI's turn.
-6. The engine selector offers Classic and Neural; Neural is disabled until a trained model is present.
-7. With a trained model loaded, the Neural engine plays a full game offline.
+6. The engine selector offers Classic and Neural; Neural is enabled out of the box (a trained model is bundled) and disabled only when no model can be loaded.
+7. The Neural engine plays a full game offline; its strength is ≥ Classic on Hard (verified by the head-to-head gate).

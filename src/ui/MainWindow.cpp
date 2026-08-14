@@ -6,6 +6,7 @@
 #include "ui/GameController.hpp"
 
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QFile>
 #include <QLabel>
 #include <QStandardItem>
@@ -14,6 +15,7 @@
 #include <QToolBar>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <span>
 
@@ -25,7 +27,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   boardWidget_ = new BoardWidget(this);
   setCentralWidget(boardWidget_);
 
-  loadModelFromEnv();  // enables the Neural engine when a model file exists
+  loadModel();  // enables the Neural engine when a model file is available
 
   controller_ = new GameController(this);
 
@@ -101,23 +103,53 @@ void MainWindow::onStatusChanged(const QString& text) {
   status_->setText(text);
 }
 
-void MainWindow::loadModelFromEnv() {
-  const char* path = std::getenv("GOMOKU_MODEL_PATH");
-  if (path == nullptr || *path == '\0') {
-    return;
-  }
-  QFile file(QString::fromUtf8(path));
+bool MainWindow::tryLoadModelFile(const QString& path) {
+  QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) {
-    return;
+    return false;
   }
   const QByteArray data = file.readAll();
   file.close();
   if (data.isEmpty()) {
-    return;
+    return false;
   }
   const auto* bytes = reinterpret_cast<const std::uint8_t*>(data.constData());
-  static_cast<void>(MctsEngine::loadModel(
-      std::span<const std::uint8_t>(bytes, static_cast<std::size_t>(data.size()))));
+  return MctsEngine::loadModel(
+      std::span<const std::uint8_t>(bytes, static_cast<std::size_t>(data.size())));
+}
+
+void MainWindow::loadModel() {
+  // 1. Explicit override: GOMOKU_MODEL_PATH wins over any bundled default. A
+  // set-but-unreadable path is a misconfiguration, so it is reported and never
+  // silently falls back to the bundled model.
+  if (const char* path = std::getenv("GOMOKU_MODEL_PATH"); path != nullptr && *path != '\0') {
+    const QString override = QString::fromUtf8(path);
+    if (tryLoadModelFile(override)) {
+      std::fprintf(stderr, "Neural engine: loaded model from %s\n",
+                   override.toUtf8().constData());
+    } else {
+      std::fprintf(stderr,
+                   "Neural engine: GOMOKU_MODEL_PATH is set but no model could be loaded "
+                   "from %s\n",
+                   override.toUtf8().constData());
+    }
+    return;
+  }
+
+  // 2. Bundled default. The model is installed next to the binary or in the
+  // standard share/ directory (see flake.nix + CMakeLists.txt install rules).
+  const QString appDir = QCoreApplication::applicationDirPath();
+  const QString candidates[] = {
+      appDir + QStringLiteral("/model.gnn"),
+      appDir + QStringLiteral("/../share/gomoku/model.gnn"),
+  };
+  for (const QString& candidate : candidates) {
+    if (tryLoadModelFile(candidate)) {
+      std::fprintf(stderr, "Neural engine: loaded bundled model from %s\n",
+                   candidate.toUtf8().constData());
+      return;
+    }
+  }
 }
 
 }  // namespace gomoku

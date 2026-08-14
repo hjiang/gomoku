@@ -30,6 +30,8 @@ Example:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -83,6 +85,52 @@ def value_mse(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return F.mse_loss(pred, target)
 
 
+def balanced_offsets(total: int, jobs: int) -> list[int]:
+    """Start offsets of ``jobs`` balanced chunks whose sizes sum to ``total``.
+
+    Chunk sizes differ by at most one, with the larger chunks first. ``jobs``
+    is clamped to ``[1, total]``. Pre: ``total >= 1``.
+    """
+    if total < 1:
+        raise ValueError("total must be >= 1")
+    jobs = max(1, min(jobs, total))
+    base, rem = divmod(total, jobs)
+    offsets = []
+    acc = 0
+    for k in range(jobs):
+        offsets.append(acc)
+        acc += base + (1 if k < rem else 0)
+    return offsets
+
+
+def merge_rec_files(paths: list[Path], out: Path) -> None:
+    """Concatenate several GameRecord streams into one, at the byte level.
+
+    Each input must be a valid stream (same magic/version). The per-file 13-byte
+    stream header is stripped and a single fresh header is written, so no full
+    decode is needed — cheap for large self-play batches. All inputs are
+    validated before ``out`` is touched, so a bad input cannot leave a partial
+    ``out`` file.
+    """
+    bodies: list[bytes] = []
+    for p in paths:
+        with open(p, "rb") as src:
+            data = src.read()
+        if len(data) < game_record.HEADER_SIZE or \
+                data[: len(game_record.MAGIC)] != game_record.MAGIC:
+            raise ValueError(f"not a GameRecord stream: {p}")
+        (version,) = struct.unpack_from("<I", data, len(game_record.MAGIC))
+        if version != game_record.VERSION:
+            raise ValueError(f"unsupported GameRecord version {version}: {p}")
+        bodies.append(data[game_record.HEADER_SIZE:])
+
+    header = game_record.MAGIC + struct.pack("<I", game_record.VERSION)
+    with open(out, "wb") as dst:
+        dst.write(header)
+        for body in bodies:
+            dst.write(body)
+
+
 def train_epoch(model, optimizer, planes, policy, value, device, batch_size,
                 value_weight: float = 1.0) -> float:
     """One epoch over on-device tensors in mini-batches. Returns mean loss.
@@ -117,6 +165,39 @@ def run_tool(cmd: list[str]) -> None:
         raise RuntimeError(
             f"{Path(cmd[0]).name} failed with exit {proc.returncode}\nstderr:\n{proc.stderr}"
         )
+
+
+def generate_records(tool: str, *, games: int, jobs: int, base_seed: int,
+                     extra: list[str], out: Path, label: str) -> None:
+    """Generate ``games`` games with ``tool``, split across ``jobs`` processes.
+
+    Each process writes a ``<out>.part<K>`` stream with a chunk of games and a
+    distinct base seed; the parts are then merged into ``out``. ``jobs == 1``
+    runs a single process straight into ``out`` (no temporary part files).
+    """
+    jobs = max(1, min(jobs, games))
+    if jobs == 1:
+        run_tool([tool, *extra, "--games", str(games), "--seed", str(base_seed),
+                  "--out", str(out)])
+        return
+
+    offsets = balanced_offsets(games, jobs)
+    parts: list[Path] = []
+    commands: list[list[str]] = []
+    for k in range(jobs):
+        chunk = (offsets[k + 1] if k + 1 < jobs else games) - offsets[k]
+        part = out.with_name(f"{out.name}.part{k}")
+        parts.append(part)
+        commands.append([tool, *extra, "--games", str(chunk),
+                         "--seed", str(base_seed + offsets[k]), "--out", str(part)])
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        list(pool.map(run_tool, commands))
+    merge_rec_files(parts, out)
+    for p in parts:
+        p.unlink(missing_ok=True)
+    print(f"{label}: merged {games} games from {jobs} parallel runs into {out}",
+          file=sys.stderr)
 
 
 def train_on_records(model, records, *, device, epochs, batch_size, lr,
@@ -170,12 +251,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--value-weight", type=float, default=1.0)
     parser.add_argument("--export-every", type=int, default=1,
                         help="write a model.rl<N>.gnn copy every N RL iterations")
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="parallel generation processes per SL/RL round "
+                             "(single-threaded C++ tools; games are independent)")
     args = parser.parse_args(argv)
 
     if not 1 <= args.num_blocks <= 1024 or not 1 <= args.channels <= 1024:
         parser.error("--num-blocks/--channels must be in [1, 1024]")
     if args.export_every < 1:
         parser.error("--export-every must be >= 1")
+    if args.jobs < 1:
+        parser.error("--jobs must be >= 1")
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -189,11 +275,12 @@ def main(argv: list[str] | None = None) -> None:
 
     # --- SL: supervised pre-training from bootstrap records -------------------
     sl_rec = outdir / "sl.rec"
-    run_tool([
-        args.bootstrap_tool, "--games", str(args.sl_games),
-        "--depth", str(args.sl_depth), "--time-ms", str(args.sl_time_ms),
-        "--seed", str(args.seed), "--out", str(sl_rec),
-    ])
+    generate_records(
+        args.bootstrap_tool, games=args.sl_games, jobs=args.jobs,
+        base_seed=args.seed,
+        extra=["--depth", str(args.sl_depth), "--time-ms", str(args.sl_time_ms)],
+        out=sl_rec, label="SL",
+    )
     sl_records = flatten_records(game_record.decode_file(str(sl_rec)))
     print(f"SL: {len(sl_records)} positions from {sl_rec}", file=sys.stderr)
     train_on_records(
@@ -207,17 +294,22 @@ def main(argv: list[str] | None = None) -> None:
     # --- RL: self-play with the current model, then train ---------------------
     for it in range(1, args.rl_iters + 1):
         rl_rec = outdir / f"rl.it{it}.rec"
-        run_tool([
-            args.selfplay_tool, "--model", str(outdir / "model.gnn"),
-            "--games", str(args.rl_games), "--sims", str(args.rl_sims),
-            "--time-ms", str(args.rl_time_ms), "--seed", str(args.seed + it),
-            "--out", str(rl_rec),
-        ])
+        generate_records(
+            args.selfplay_tool, games=args.rl_games, jobs=args.jobs,
+            base_seed=args.seed + it,
+            extra=["--model", str(outdir / "model.gnn"),
+                   "--sims", str(args.rl_sims), "--time-ms", str(args.rl_time_ms)],
+            out=rl_rec, label=f"RL{it}",
+        )
         rl_records = flatten_records(game_record.decode_file(str(rl_rec)))
         print(f"RL iteration {it}: {len(rl_records)} positions from {rl_rec}",
               file=sys.stderr)
+        # Anchor RL on the supervised bootstrap: training only on the fresh
+        # self-play batch lets the noisy low-sim visit-count targets overwrite
+        # the alpha-beta teacher policy (catastrophic forgetting). Mixing the
+        # SL records back in every iteration keeps the policy grounded.
         train_on_records(
-            model, rl_records, device=device, epochs=args.rl_epochs,
+            model, sl_records + rl_records, device=device, epochs=args.rl_epochs,
             batch_size=args.rl_batch_size, lr=args.rl_lr,
             value_weight=args.value_weight, label=f"RL{it}",
         )

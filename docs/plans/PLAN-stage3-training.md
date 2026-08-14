@@ -125,6 +125,7 @@ export), `src/tools/headtohead.cpp` (`gomoku-headtohead`), and the
 - Head-to-head gate vs the classic engine (developer script, not `ctest`).
 
 ### Increment 4 — ship a trained model + end-to-end verification
+**Status: complete.**
 - Drop the best model into the game's data path; verify `MctsEngine` loads it
   and the Neural engine plays a full offline game at ≥ Classic-Hard strength.
 

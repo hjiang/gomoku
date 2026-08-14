@@ -94,8 +94,8 @@ The player switches between them at runtime. The shipped game stays pure C++
 | Weights absent at runtime | Neural engine disabled in UI; `MctsEngine::findBestMove` throws (no silent fallback). |
 
 ## Definition of done
-- [ ] Classic and Neural engines switchable from the UI.
-- [ ] Neural disabled (and throws) without a trained model.
-- [ ] A trained model plays a full game offline; strength ≥ Classic on Hard.
-- [ ] `nix develop -c ctest --test-dir build` green, zero warnings; `nix flake check` passes.
-- [ ] `docs/REQUIREMENTS.md` and `docs/ARCHITECTURE.md` reflect the shipped behavior.
+- [x] Classic and Neural engines switchable from the UI.
+- [x] Neural disabled (and throws) without a trained model.
+- [x] A trained model plays a full game offline; strength ≥ Classic on Hard.
+- [x] `nix develop -c ctest --test-dir build` green, zero warnings; `nix flake check` passes.
+- [x] `docs/REQUIREMENTS.md` and `docs/ARCHITECTURE.md` reflect the shipped behavior.

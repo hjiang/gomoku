@@ -107,3 +107,6 @@ add_test(NAME controller COMMAND gomoku_controller_tests)
 
 include(GNUInstallDirs)
 install(TARGETS gomoku RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+# Ship the trained model so the Neural engine works out of the box (FR14).
+# MainWindow looks it up at <applicationDirPath>/../share/gomoku/model.gnn.
+install(FILES resources/model.gnn DESTINATION ${CMAKE_INSTALL_DATADIR}/gomoku)

@@ -14,6 +14,10 @@ venv/
 __pycache__/
 *.gnn
 *.rec
+# The shipped model is a committed data file, so un-ignore it. The flake.nix
+# source filter separately whitelists its exact path (all other *.gnn files —
+# training artifacts — stay ignored/excluded).
+!resources/model.gnn
 # The uv lock encodes one hardware's torch wheel (CPU vs CUDA) and differs per
 # machine, so it is not tracked — training/scripts/sync.sh resolves per machine.
 uv.lock

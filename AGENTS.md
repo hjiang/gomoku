@@ -59,8 +59,9 @@ creating ANY new source file, run `git add -N` on it before `nix build` /
   Hardware logic: `training/hardware.py` (stdlib-only, hermetic test in
   `tests/test_hardware.py`).
 - `.gnn` byte layout: `src/core/Weights.cpp` is the source of truth; Python
-  mirror is `training/gnn_format.py` (stdlib-only, **encode only** — add a decoder
-  if Inc 3 needs to load a `.gnn` back into PyTorch).
+  mirror is `training/gnn_format.py` (stdlib-only, **encode only** — the trainer
+  keeps the model in memory and only exports; it never loads a `.gnn` back into
+  PyTorch).
 - Training-data streams from `gomoku-bootstrap`/`gomoku-selfplay` use the
   `GameRecord` binary format (`src/core/GameRecord.cpp`); the Python side is
   `training/game_record.py` (stdlib-only decoder: magic `GOMOKUREC`, u32
@@ -72,6 +73,15 @@ creating ANY new source file, run `git add -N` on it before `nix build` /
   first, then `export_gnn` → `gomoku-selfplay --model X.gnn` (RL self-play needs
   a trained model) → train. The model stays in memory (only exported; `.gnn` is
   never reloaded into torch). Runtime device via `hardware.select_device()`.
+  `--jobs J` parallelizes the single-threaded generators (J processes, byte-
+  merged `.rec` streams).
+- **Model shipping (Inc 4)**: the trained model is committed at
+  `resources/model.gnn` and installed to `share/gomoku/model.gnn`. `flake.nix`
+  whitelists the exact path `resources/model.gnn` (the source filter otherwise
+  drops every `*.gnn`). `MainWindow::loadModel` loads `GOMOKU_MODEL_PATH`
+  (override) else the bundled model, so the Neural engine works out of the box.
+  Do NOT let generated `.gnn`/`.rec` files (training artifacts under `.pi/`) be
+  committed — they stay git-ignored and flake-excluded.
 - Head-to-head gate: `src/tools/headtohead.cpp` (`gomoku-headtohead`) plays the
   neural (MCTS) engine vs Classic-Hard alpha-beta; `tests/test_headtohead.py`
   drives it (report-only unless `--min-winrate` is set).

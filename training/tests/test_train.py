@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Hermetic test for the pure training helpers in ``training/train.py``.
 
-Builds ``PositionRecord``s in memory (no C++ tools, no filesystem) and asserts:
+Builds ``PositionRecord``s in memory (no C++ tools) and asserts:
 
   - ``flatten_records`` flattens the decoded stream structure;
   - ``records_to_tensors`` produces the right shapes/values/dtypes;
   - ``policy_cross_entropy`` / ``value_mse`` are finite scalars, the policy CE
     with a distribution target is positive, and backprop flows;
-  - ``train_epoch`` performs a real optimizer step (a parameter changes).
+  - ``train_epoch`` performs a real optimizer step (a parameter changes);
+  - ``balanced_offsets`` and ``merge_rec_files`` (the ``--jobs`` helpers) behave
+    correctly (the merge test uses a stdlib ``tempfile`` dir, no C++ tools).
 
 Needs torch (developer script, not ctest).
 
@@ -17,6 +19,7 @@ Usage:  python tests/test_train.py
 import math
 import pathlib
 import sys
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -90,6 +93,55 @@ def test_losses_finite_and_backprop() -> None:
     assert pred.grad.abs().sum().item() > 0.0
 
 
+def test_balanced_offsets() -> None:
+    """``balanced_offsets`` produces balanced chunk start offsets."""
+    # Exact division.
+    assert train.balanced_offsets(8, 4) == [0, 2, 4, 6]
+    # Remainder goes to the first chunks (sizes differ by at most one).
+    assert train.balanced_offsets(7, 3) == [0, 3, 5]
+    # jobs > total clamps to total single-game chunks.
+    assert train.balanced_offsets(3, 10) == [0, 1, 2]
+    # A single job starts at zero.
+    assert train.balanced_offsets(5, 1) == [0]
+
+
+def test_merge_rec_files() -> None:
+    """``merge_rec_files`` concatenates streams at the byte level."""
+    games_a = [make_records(2, 1), make_records(3, 2)]
+    games_b = [make_records(4, 3)]
+    with tempfile.TemporaryDirectory() as td:
+        td = pathlib.Path(td)
+        a = td / "a.rec"
+        b = td / "b.rec"
+        out = td / "merged.rec"
+        a.write_bytes(game_record.encode_stream(games_a))
+        b.write_bytes(game_record.encode_stream(games_b))
+        train.merge_rec_files([a, b], out)
+        merged = game_record.decode_stream(out.read_bytes())
+        assert len(merged) == 3
+        assert len(merged[0]) == 2
+        assert len(merged[1]) == 3
+        assert len(merged[2]) == 4
+
+
+def test_merge_rec_files_rejects_bad_streams() -> None:
+    """``merge_rec_files`` rejects a bad magic/version and leaves no partial out."""
+    with tempfile.TemporaryDirectory() as td:
+        td = pathlib.Path(td)
+        good = td / "good.rec"
+        bad = td / "bad.rec"
+        out = td / "merged.rec"
+        good.write_bytes(game_record.encode_stream([make_records(1, 1)]))
+        bad.write_bytes(b"GOMOKUREC" + bytes(4 + 1024))  # bad version bytes
+        try:
+            train.merge_rec_files([good, bad], out)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("merge_rec_files did not reject a bad stream")
+        assert not out.exists(), "merge_rec_files wrote a partial output on failure"
+
+
 def test_train_epoch_updates_parameters() -> None:
     torch.manual_seed(1)
     records = make_records(16, 7)
@@ -112,6 +164,9 @@ def main() -> None:
     test_records_to_tensors()
     test_losses_finite_and_backprop()
     test_train_epoch_updates_parameters()
+    test_balanced_offsets()
+    test_merge_rec_files()
+    test_merge_rec_files_rejects_bad_streams()
     print("OK: train.py pure-helper tests passed")
 
 
