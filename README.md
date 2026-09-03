@@ -125,22 +125,25 @@ It should print `SL: …`, `RL1: …` and finish with
 
 ### A real training run
 
-The values below are the ones used to train the shipped model (≈ 1–2 hours on
-a 16-core CPU-only machine). Raise `--sl-games`/`--sl-epochs` for a better
-imitation, and `--rl-iters`/`--rl-sims` for stronger self-play:
+The values below are close to the ones used to train the shipped model (≈ 1–2
+hours on a 16-core CPU-only machine), plus the data-balancing and evaluation
+flags. Raise `--sl-games`/`--sl-epochs` for a better imitation, and
+`--rl-iters`/`--rl-sims` for stronger self-play:
 
 ```bash
 cd training
 uv run python train.py \
     --bootstrap-tool ../build/gomoku-bootstrap \
     --selfplay-tool ../build/gomoku-selfplay \
+    --eval-tool ../build/gomoku-headtohead \
     --outdir .pi/training \
     --num-blocks 4 --channels 16 \
     --seed 20260813 \
-    --sl-games 512 --sl-depth 6 --sl-time-ms 2000 \
+    --sl-games 512 --sl-depth 6 --sl-time-ms 2000 --sl-jitter 2 \
     --sl-epochs 6 --sl-batch-size 64 --sl-lr 1e-3 \
     --rl-iters 5 --rl-games 160 --rl-sims 800 --rl-time-ms 5000 \
     --rl-epochs 2 --rl-batch-size 64 --rl-lr 1e-4 \
+    --val-frac 0.05 --eval-games 24 \
     --value-weight 1.0 --export-every 1 \
     --jobs 16
 ```
@@ -153,9 +156,23 @@ Notes:
   strength (the search is time-bound, so the depth cap is free extra headroom).
 - `--rl-sims` should roughly match the evaluation budget: the Neural engine
   gets 1600 sims but a 2000 ms deadline, which on CPU is ≈ 800 effective sims.
-- The run writes `model.sl.gnn`, `model.rl<N>.gnn`, and always the latest
-  `model.gnn` into `--outdir`. The `.gnn` model is never reloaded into PyTorch;
-  training keeps it in memory and only exports.
+- `--sl-jitter 2` randomizes the first 2 bootstrap opening plies inside the
+  center 5×5. With the teacher alone, ~100% of games end in a Black win, so
+  the value head degenerates into a who-moves-first detector; jittered
+  openings let White win a real share and balance the value targets.
+- Data augmentation is automatic — every training sample is transformed on
+  the fly with one of the 8 dihedral (rotation/reflection) symmetries of the
+  board; there is no flag for it.
+- `--val-frac 0.05` holds out a deterministic validation split per phase;
+  each epoch line then also reports `val_ce`/`val_mse` so you can watch the
+  SL loss plateau (set to 0 to disable).
+- `--eval-tool`/`--eval-games` run a head-to-head eval (Neural vs Classic-Hard)
+  after every exported checkpoint and write the best-by-winrate to
+  `model.best.gnn`.
+- The run writes `model.sl.gnn`, `model.rl<N>.gnn`, always the latest
+  `model.gnn`, and (with eval enabled) `model.best.gnn` into `--outdir`. The
+  `.gnn` model is never reloaded into PyTorch; training keeps it in memory
+  and only exports.
 
 ### Evaluate a model (head-to-head vs Classic)
 
@@ -166,14 +183,19 @@ at **Hard** (depth 6 / 2000 ms):
 cd training
 uv run python tests/test_headtohead.py \
     --tool ../build/gomoku-headtohead \
-    --model ../.pi/training/model.rl3.gnn \
-    --games 20
+    --model ../.pi/training/model.best.gnn \
+    --games 100
 ```
 
-Add `--min-winrate 0.5` to turn it into a hard gate (it fails if the Neural
-engine wins fewer than half of the decided games). The shipped model scores
-**50%** — it wins every game as Black (first mover) and, like Classic, cannot
-overcome freestyle gomoku's decisive first-mover advantage as White.
+Use at least **100 games** — with 20 the win-rate estimate has ±20-point
+noise. The most user-relevant signal is `mcts_white_wins`: you always play
+Black against the Neural engine, so a model that wins games as White is the
+one that will feel strong to a human. Add `--min-winrate 0.5` to turn the
+overall rate into a hard gate (it fails if the Neural engine wins fewer than
+half of the decided games). The shipped model scores **50%** overall but
+**0 White wins** — it wins every game as Black (first mover) and, like
+Classic, cannot overcome freestyle gomoku's decisive first-mover advantage as
+White.
 
 ### Ship a model
 
@@ -181,12 +203,14 @@ Once you have a model you like, copy it into the game's data path so the
 Neural engine uses it by default:
 
 ```bash
-cp .pi/training/model.rl3.gnn resources/model.gnn   # from the repo root
-nix run .#                                           # now uses the new model
+cp .pi/training/model.best.gnn resources/model.gnn   # from the repo root
+nix run .#                                            # now uses the new model
 ```
 
-`resources/model.gnn` is the single file the game loads (see
-`src/ui/MainWindow.cpp`); `GOMOKU_MODEL_PATH` always overrides it.
+`model.best.gnn` is the best checkpoint by head-to-head eval (written when
+you run with `--eval-tool`/`--eval-games`); `model.gnn` is always just the
+latest checkpoint. `resources/model.gnn` is the single file the game loads
+(see `src/ui/MainWindow.cpp`); `GOMOKU_MODEL_PATH` always overrides it.
 
 ## Project layout
 

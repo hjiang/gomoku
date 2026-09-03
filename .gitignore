@@ -21,3 +21,6 @@ __pycache__/
 # The uv lock encodes one hardware's torch wheel (CPU vs CUDA) and differs per
 # machine, so it is not tracked — training/scripts/sync.sh resolves per machine.
 uv.lock
+
+# Local nix cache fallback when the real ~/.cache is read-only (sandboxed builds)
+/.cache-nix/

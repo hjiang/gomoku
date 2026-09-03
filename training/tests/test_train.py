@@ -159,6 +159,133 @@ def test_train_epoch_updates_parameters() -> None:
         "optimizer step did not change a parameter"
 
 
+def test_dihedral_transform_anchors() -> None:
+    """k=0 identity; k=1 pure rot90 maps (3,5)->(9,3); k=4 pure flip maps (3,5)->(3,9)."""
+    marker = (3, 5)
+    planes = torch.zeros(1, 4, 15, 15)
+    planes[0, 0, marker[0], marker[1]] = 1.0
+    policy = torch.zeros(1, 225)
+    policy[0, marker[0] * 15 + marker[1]] = 1.0
+
+    def cell(t: torch.Tensor) -> tuple:
+        flat = int(torch.argmax(t[0, 0].reshape(-1)).item())
+        return (flat // 15, flat % 15)
+
+    # k=0: identity.
+    p0, pol0 = train.dihedral_transform(planes.clone(), policy.clone(), 0)
+    assert cell(p0) == marker
+    assert int(torch.argmax(pol0).item()) == marker[0] * 15 + marker[1]
+    # k=1: pure rot90 (counterclockwise) maps (r,c) -> (14-c, r).
+    p1, pol1 = train.dihedral_transform(planes.clone(), policy.clone(), 1)
+    assert cell(p1) == (9, 3)
+    assert int(torch.argmax(pol1).item()) == 9 * 15 + 3
+    # k=4: pure horizontal flip maps (r,c) -> (r, 14-c).
+    p4, pol4 = train.dihedral_transform(planes.clone(), policy.clone(), 4)
+    assert cell(p4) == (3, 9)
+    assert int(torch.argmax(pol4).item()) == 3 * 15 + 9
+
+
+def test_dihedral_transform_consistency() -> None:
+    """For all k: plane marker cell == policy argmax cell (same spatial map)."""
+    rng = torch.Generator().manual_seed(123)
+    for k in range(8):
+        planes = torch.zeros(2, 4, 15, 15)
+        policy = torch.zeros(2, 225)
+        for b in range(2):
+            cell = int(torch.randint(0, 225, (1,), generator=rng).item())
+            r, c = divmod(cell, 15)
+            planes[b, 0, r, c] = 1.0
+            policy[b, cell] = 1.0
+        tp, tpol = train.dihedral_transform(planes, policy, k)
+        for b in range(2):
+            plane_cell = int(torch.argmax(tp[b, 0].reshape(-1)).item())
+            pol_cell = int(torch.argmax(tpol[b]).item())
+            assert plane_cell == pol_cell, (k, b, plane_cell, pol_cell)
+
+
+def test_dihedral_transform_permutation() -> None:
+    """For all k: policy row sums and marker-plane ones counts are preserved."""
+    rng = torch.Generator().manual_seed(999)
+    planes = torch.zeros(2, 4, 15, 15)
+    policy = torch.rand(2, 225)
+    policy = policy / policy.sum(1, keepdim=True)
+    for b in range(2):
+        for ch in range(4):
+            n_ones = 3 + ch
+            cells = torch.randperm(225, generator=rng)[:n_ones]
+            planes[b, ch].view(-1).scatter_(0, cells, 1.0)
+    for k in range(8):
+        tp, tpol = train.dihedral_transform(planes, policy, k)
+        assert torch.equal(tp.sum(dim=(2, 3)), planes.sum(dim=(2, 3))), k
+        assert torch.allclose(tpol.sum(1), policy.sum(1)), k
+        assert torch.equal(tp, tp.round()), k
+
+
+def test_split_records() -> None:
+    """Deterministic, disjoint, covers all indices; val_frac=0 -> empty val."""
+    records = make_records(100, 5)
+
+    tr0, va0 = train.split_records(records, 0.0, 42)
+    assert len(va0) == 0
+    assert len(tr0) == 100
+
+    tr1, va1 = train.split_records(records, 0.25, 7)
+    tr2, va2 = train.split_records(records, 0.25, 7)
+    assert len(va1) == 25
+    assert [id(r) for r in tr1] == [id(r) for r in tr2]
+    assert [id(r) for r in va1] == [id(r) for r in va2]
+
+    ids_tr = {id(r) for r in tr1}
+    ids_va = {id(r) for r in va1}
+    assert ids_tr.isdisjoint(ids_va)
+    assert ids_tr | ids_va == {id(r) for r in records}
+
+    tr3, va3 = train.split_records(records, 0.25, 8)
+    assert [id(r) for r in va1] != [id(r) for r in va3]
+    try:
+        train.split_records(records, 1.0, 0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("val_frac >= 1 should be rejected")
+
+
+def test_train_epoch_augmented_steps_parameters() -> None:
+    """With per-sample dihedral augmentation active, train_epoch still steps params."""
+    torch.manual_seed(11)
+    records = make_records(16, 9)
+    planes, policy, value = train.records_to_tensors(records)
+
+    model = model_mod.GomokuNet(num_blocks=1, channels=2)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    before = model.policy_fc.weight.detach().clone()
+
+    loss = train.train_epoch(model, optimizer, planes, policy, value,
+                             torch.device("cpu"), batch_size=8, value_weight=1.0)
+    assert math.isfinite(loss)
+    assert not torch.equal(before, model.policy_fc.weight.detach()), \
+        "augmented optimizer step did not change a parameter"
+
+
+def test_train_on_records_val() -> None:
+    """train_on_records uses a caller-owned optimizer; val path runs when val_frac>0."""
+    torch.manual_seed(3)
+    records = make_records(24, 2)
+    model = model_mod.GomokuNet(num_blocks=1, channels=2)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    train.train_on_records(
+        model, records, device=torch.device("cpu"), epochs=1, batch_size=8,
+        optimizer=optimizer, value_weight=1.0, label="no-val", val_frac=0.0,
+        val_seed=0,
+    )
+    train.train_on_records(
+        model, records, device=torch.device("cpu"), epochs=1, batch_size=8,
+        optimizer=optimizer, value_weight=1.0, label="with-val", val_frac=0.25,
+        val_seed=3,
+    )
+
+
 def main() -> None:
     test_flatten_records()
     test_records_to_tensors()
@@ -167,6 +294,12 @@ def main() -> None:
     test_balanced_offsets()
     test_merge_rec_files()
     test_merge_rec_files_rejects_bad_streams()
+    test_dihedral_transform_anchors()
+    test_dihedral_transform_consistency()
+    test_dihedral_transform_permutation()
+    test_split_records()
+    test_train_epoch_augmented_steps_parameters()
+    test_train_on_records_val()
     print("OK: train.py pure-helper tests passed")
 
 

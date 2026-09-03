@@ -134,11 +134,45 @@ TEST_CASE("selfplay: bootstrap games are consistent and deterministic per seed",
   // moves (the alpha-beta deadline is the only nondeterminism in the pipeline).
   params.maxDepth = 1;
   params.timeBudgetMs = 5000;
+  // openingJitter defaults to 0 here: this test is the back-compat pin that
+  // keeps default-parameter bootstrap output byte-identical.
   for (std::uint32_t seed = 1; seed <= 3; ++seed) {
     const GameRecord a = generateBootstrapGame(seed, params);
     const GameRecord b = generateBootstrapGame(seed, params);
     REQUIRE(encodeStream({a}) == encodeStream({b}));
     checkGameConsistency(a);
+  }
+}
+
+TEST_CASE("selfplay: bootstrap opening jitter randomizes the first two plies in the center 5x5", "[selfplay]") {
+  SearchParams params;
+  params.maxDepth = 1;
+  params.timeBudgetMs = 5000;
+  params.openingJitter = 2;  // openingRadius stays at its default of 2
+
+  for (std::uint32_t seed = 1; seed <= 3; ++seed) {
+    const GameRecord a = generateBootstrapGame(seed, params);
+    const GameRecord b = generateBootstrapGame(seed, params);
+    // Deterministic per seed, and every consistency invariant still holds.
+    REQUIRE(encodeStream({a}) == encodeStream({b}));
+    checkGameConsistency(a);
+
+    // Both jittered opening plies are recorded, so the game has at least the
+    // two opening positions plus the first teacher position.
+    REQUIRE(a.positions.size() >= 3);
+
+    // The jittered Black opening move is the cell added between positions 0 and 1;
+    // it must lie in the center 5x5 (rows/cols 5..9, within 2 of center 7).
+    const std::optional<Position> blackOpening = moveCellFromRecord(a, 0);
+    REQUIRE(blackOpening.has_value());
+    REQUIRE((blackOpening->row >= 5 && blackOpening->row <= 9));
+    REQUIRE((blackOpening->col >= 5 && blackOpening->col <= 9));
+
+    // The jittered White opening move is the cell added between positions 1 and 2.
+    const std::optional<Position> whiteOpening = moveCellFromRecord(a, 1);
+    REQUIRE(whiteOpening.has_value());
+    REQUIRE((whiteOpening->row >= 5 && whiteOpening->row <= 9));
+    REQUIRE((whiteOpening->col >= 5 && whiteOpening->col <= 9));
   }
 }
 

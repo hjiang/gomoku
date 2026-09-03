@@ -16,6 +16,8 @@ struct SearchParams {
   std::uint32_t seed = 0;     // nonzero: deterministic variety in move ordering
   EngineKind engine = EngineKind::AlphaBeta;  // which search engine to run
   int mctsSimulations = 1000; // per-move simulation budget (Mcts)
+  int openingJitter = 0;      // first N plies of a bootstrap game are uniform-random (center region)
+  int openingRadius = 2;      // half-width of the random-opening region (center 5x5)
 };
 
 // Facade: dispatches to the selected engine behind a single board -> move
