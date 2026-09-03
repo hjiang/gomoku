@@ -102,8 +102,8 @@ def dihedral_transform(planes: torch.Tensor, policy: torch.Tensor,
     (B,225) so the (input, target) pair stays a valid training example:
     gomoku is invariant under the dihedral group of the square board. The
     value target needs no transform. ``k`` in 0..7 with ``rot = k % 4`` and
-    ``flip = k >= 4`` (horizontal reflection, applied before rotation);
-    ``k == 0`` is the identity.
+    ``flip = k >= 4`` (a left-right mirror, ``(r, c) -> (r, 14 - c)``,
+    applied before rotation); ``k == 0`` is the identity.
     """
     rot = k % 4
     flip = k >= 4
@@ -296,9 +296,16 @@ def run_headtohead(eval_tool: str, path: Path, games: int, label: str):
     Returns the parsed field dict, or ``None`` if the tool failed or its output
     was malformed. Prints one ``EVAL <label>: ...`` summary line to stderr.
     """
+    # Pin the Hard presets (and the seed) instead of relying on the tool's
+    # defaults, so model selection survives future default changes; the fixed
+    # seed keeps evals a deterministic paired comparison across checkpoints,
+    # matching tests/test_headtohead.py.
     try:
-        proc = subprocess.run([eval_tool, "--model", str(path), "--games", str(games)],
-                              capture_output=True, text=True)
+        proc = subprocess.run(
+            [eval_tool, "--model", str(path), "--games", str(games),
+             "--sims", "1600", "--depth", "6", "--time-ms", "2000",
+             "--seed", "1"],
+            capture_output=True, text=True)
     except OSError as exc:
         print(f"EVAL {label}: gomoku-headtohead failed to run: {exc}",
               file=sys.stderr)
