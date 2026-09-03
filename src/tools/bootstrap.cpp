@@ -20,19 +20,20 @@ struct Options {
   int games = 100;
   int depth = 4;
   int timeMs = 1000;
+  int jitter = 0;  // first N plies of each game are uniform-random (center 5x5)
   std::uint32_t seed = 1;
   std::string out = "bootstrap.rec";
 };
 
 void usage() {
-  std::cerr << "usage: gomoku-bootstrap --games N --depth D --time-ms T --seed S --out FILE\n";
+  std::cerr << "usage: gomoku-bootstrap --games N --depth D --time-ms T --jitter J --seed S --out FILE\n";
 }
 
 bool parseArgs(int argc, char** argv, Options& opts) {
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
-    if (arg == "--games" || arg == "--depth" || arg == "--time-ms" || arg == "--seed" ||
-        arg == "--out") {
+    if (arg == "--games" || arg == "--depth" || arg == "--time-ms" || arg == "--jitter" ||
+        arg == "--seed" || arg == "--out") {
       if (i + 1 >= argc) {
         std::cerr << "missing value for " << arg << '\n';
         return false;
@@ -44,6 +45,8 @@ bool parseArgs(int argc, char** argv, Options& opts) {
         opts.depth = std::atoi(value.c_str());
       } else if (arg == "--time-ms") {
         opts.timeMs = std::atoi(value.c_str());
+      } else if (arg == "--jitter") {
+        opts.jitter = std::atoi(value.c_str());
       } else if (arg == "--seed") {
         opts.seed = static_cast<std::uint32_t>(std::strtoul(value.c_str(), nullptr, 10));
       } else {
@@ -54,7 +57,7 @@ bool parseArgs(int argc, char** argv, Options& opts) {
       return false;
     }
   }
-  return opts.games >= 1 && opts.depth >= 1 && opts.timeMs >= 0;
+  return opts.games >= 1 && opts.depth >= 1 && opts.timeMs >= 0 && opts.jitter >= 0;
 }
 
 }  // namespace
@@ -69,6 +72,7 @@ int main(int argc, char** argv) {
   SearchParams params;
   params.maxDepth = opts.depth;
   params.timeBudgetMs = opts.timeMs;
+  params.openingJitter = opts.jitter;
 
   std::vector<GameRecord> games;
   games.reserve(static_cast<std::size_t>(opts.games));
