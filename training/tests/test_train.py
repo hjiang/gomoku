@@ -268,22 +268,28 @@ def test_train_epoch_augmented_steps_parameters() -> None:
 
 
 def test_train_on_records_val() -> None:
-    """train_on_records uses a caller-owned optimizer; val path runs when val_frac>0."""
+    """train_on_records returns per-epoch metrics; val keys only when val_frac>0."""
     torch.manual_seed(3)
     records = make_records(24, 2)
     model = model_mod.GomokuNet(num_blocks=1, channels=2)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    train.train_on_records(
+    no_val = train.train_on_records(
         model, records, device=torch.device("cpu"), epochs=1, batch_size=8,
         optimizer=optimizer, value_weight=1.0, label="no-val", val_frac=0.0,
         val_seed=0,
     )
-    train.train_on_records(
+    with_val = train.train_on_records(
         model, records, device=torch.device("cpu"), epochs=1, batch_size=8,
         optimizer=optimizer, value_weight=1.0, label="with-val", val_frac=0.25,
         val_seed=3,
     )
+    assert len(no_val) == 1 and len(with_val) == 1
+    assert math.isfinite(no_val[0]["loss"])
+    assert "val_ce" not in no_val[0] and "val_mse" not in no_val[0]
+    assert math.isfinite(with_val[0]["loss"])
+    assert with_val[0]["val_ce"] > 0 and math.isfinite(with_val[0]["val_ce"])
+    assert with_val[0]["val_mse"] >= 0 and math.isfinite(with_val[0]["val_mse"])
 
 
 def main() -> None:

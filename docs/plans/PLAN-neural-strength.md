@@ -96,8 +96,10 @@ Files:
     `EVAL rl<N>: X/Y (black b, white w)`, and copy the best checkpoint by win
     rate to `model.best.gnn`. `model.gnn` keeps its current meaning (latest,
     feeds the next self-play round).
-  - Keep one `torch.optim.Adam` created once in `main` and passed into
-    `train_on_records` (RL rounds currently discard momentum state each round).
+  - Give each phase its own `torch.optim.Adam` (SL and RL use different
+    learning rates); create the RL one once in `main` and pass it into
+    `train_on_records` so RL momentum survives across rounds (previously
+    discarded each round).
 - `README.md`: ship-from `model.best.gnn`; document new flags.
 
 Note for runbook: each eval game takes ~1-3 min at Hard budgets, so

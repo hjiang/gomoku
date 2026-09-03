@@ -150,7 +150,20 @@ TEST_CASE("selfplay: bootstrap opening jitter randomizes the first two plies in 
   params.timeBudgetMs = 5000;
   params.openingJitter = 2;  // openingRadius stays at its default of 2
 
+  // Guards against a silently disabled feature: determinism, in-bounds, and
+  // consistency would all still pass if the jitter branch never fired and
+  // the teacher played both openings. At least one seed's jittered Black
+  // opening must therefore differ from the same-seed teacher game's.
+  bool anyJitteredOpeningDiffers = false;
+
   for (std::uint32_t seed = 1; seed <= 3; ++seed) {
+    SearchParams teacherParams = params;
+    teacherParams.openingJitter = 0;
+    const GameRecord teacherGame = generateBootstrapGame(seed, teacherParams);
+    const std::optional<Position> teacherOpening =
+        moveCellFromRecord(teacherGame, 0);
+    REQUIRE(teacherOpening.has_value());
+
     const GameRecord a = generateBootstrapGame(seed, params);
     const GameRecord b = generateBootstrapGame(seed, params);
     // Deterministic per seed, and every consistency invariant still holds.
@@ -167,6 +180,9 @@ TEST_CASE("selfplay: bootstrap opening jitter randomizes the first two plies in 
     REQUIRE(blackOpening.has_value());
     REQUIRE((blackOpening->row >= 5 && blackOpening->row <= 9));
     REQUIRE((blackOpening->col >= 5 && blackOpening->col <= 9));
+    if (*blackOpening != *teacherOpening) {
+      anyJitteredOpeningDiffers = true;
+    }
 
     // The jittered White opening move is the cell added between positions 1 and 2.
     const std::optional<Position> whiteOpening = moveCellFromRecord(a, 1);
@@ -174,6 +190,8 @@ TEST_CASE("selfplay: bootstrap opening jitter randomizes the first two plies in 
     REQUIRE((whiteOpening->row >= 5 && whiteOpening->row <= 9));
     REQUIRE((whiteOpening->col >= 5 && whiteOpening->col <= 9));
   }
+
+  REQUIRE(anyJitteredOpeningDiffers);
 }
 
 TEST_CASE("selfplay: self-play games are consistent and deterministic per seed", "[selfplay]") {

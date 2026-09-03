@@ -122,7 +122,9 @@ def split_records(records: list[game_record.PositionRecord], val_frac: float,
     """Deterministically split ``records`` into ``(train, val)`` lists.
 
     ``val_frac`` must be in [0, 1); ``val_frac == 0`` returns all records as
-    train and an empty val list. A local ``random.Random(seed)`` shuffles the
+    train and an empty val list. When ``val_frac > 0`` and more than one
+    record is given, the val list is never empty, so small datasets still
+    exercise the validation path. A local ``random.Random(seed)`` shuffles the
     indices (never the global RNG), so the split is reproducible under a fixed
     seed without disturbing torch's RNG state.
     """
@@ -131,7 +133,9 @@ def split_records(records: list[game_record.PositionRecord], val_frac: float,
     if val_frac == 0.0 or not records:
         return list(records), []
     n = len(records)
-    n_val = min(round(n * val_frac), n - 1)
+    # Clamp up to 1 so round() cannot silently disable validation on small
+    # datasets (e.g. n=8, val_frac=0.05 rounds to 0); n-1 keeps >= 1 train.
+    n_val = min(max(round(n * val_frac), 1), n - 1)
     rng = random.Random(seed)
     order = list(range(n))
     rng.shuffle(order)
@@ -194,8 +198,10 @@ def train_epoch(model, optimizer, planes, policy, value, device, batch_size,
     ``planes``/``policy``/``value`` must already be on ``device``. Each batch
     is augmented on the fly: every sample gets its own random 8-fold dihedral
     transform (drawn from the torch global RNG, seeded in main) applied to
-    planes and policy together, so the (input, target) pair stays valid. The
-    loss is ``policy_cross_entropy + value_weight * value_mse``.
+    planes and policy together, so the (input, target) pair stays valid.
+    Samples are grouped by transform (at most 8 batched calls per batch) so
+    augmentation launches no per-sample kernels and no device syncs on CUDA.
+    The loss is ``policy_cross_entropy + value_weight * value_mse``.
     """
     model.train()
     n = planes.shape[0]
@@ -206,14 +212,23 @@ def train_epoch(model, optimizer, planes, policy, value, device, batch_size,
         idx = indices[start : start + batch_size]
         batch_planes = planes[idx]
         batch_policy = policy[idx]
-        # One random dihedral symmetry per sample (torch global RNG).
-        k = torch.randint(0, 8, (batch_planes.shape[0],), device=device)
-        augmented = [
-            dihedral_transform(p.unsqueeze(0), pol.unsqueeze(0), int(ki))
-            for p, pol, ki in zip(batch_planes, batch_policy, k.tolist())
-        ]
-        batch_planes = torch.cat([t[0] for t in augmented], dim=0)
-        batch_policy = torch.cat([t[1] for t in augmented], dim=0)
+        # One random dihedral symmetry per sample (torch global RNG). k is
+        # drawn on the CPU and the batch grouped by transform (<= 8 batched
+        # calls) so CUDA needs no per-sample kernels and no device sync.
+        k = torch.randint(0, 8, (batch_planes.shape[0],))
+        counts = torch.bincount(k, minlength=8)
+        planes_out = torch.empty_like(batch_planes)
+        policy_out = torch.empty_like(batch_policy)
+        for ki in range(8):
+            if int(counts[ki]) == 0:
+                continue
+            mask = (k == ki).to(batch_planes.device, non_blocking=True)
+            aug_planes, aug_policy = dihedral_transform(
+                batch_planes[mask], batch_policy[mask], ki)
+            planes_out[mask] = aug_planes
+            policy_out[mask] = aug_policy
+        batch_planes = planes_out
+        batch_policy = policy_out
         optimizer.zero_grad()
         logits, pred = model(batch_planes)
         loss = policy_cross_entropy(logits, batch_policy) + value_weight * value_mse(
@@ -281,8 +296,13 @@ def run_headtohead(eval_tool: str, path: Path, games: int, label: str):
     Returns the parsed field dict, or ``None`` if the tool failed or its output
     was malformed. Prints one ``EVAL <label>: ...`` summary line to stderr.
     """
-    proc = subprocess.run([eval_tool, "--model", str(path), "--games", str(games)],
-                          capture_output=True, text=True)
+    try:
+        proc = subprocess.run([eval_tool, "--model", str(path), "--games", str(games)],
+                              capture_output=True, text=True)
+    except OSError as exc:
+        print(f"EVAL {label}: gomoku-headtohead failed to run: {exc}",
+              file=sys.stderr)
+        return None
     if proc.returncode != 0:
         print(f"EVAL {label}: gomoku-headtohead failed with exit {proc.returncode}: "
               f"{proc.stderr.strip()}", file=sys.stderr)
@@ -306,14 +326,15 @@ def run_headtohead(eval_tool: str, path: Path, games: int, label: str):
 
 def train_on_records(model, records, *, device, epochs, batch_size, optimizer,
                      value_weight, label: str, val_frac: float = 0.0,
-                     val_seed: int = 0) -> None:
+                     val_seed: int = 0) -> list[dict[str, float]]:
     """Build tensors from decoded records and train for ``epochs`` epochs.
 
     ``records`` are split deterministically (``split_records``) into train/val;
     the ``optimizer`` is caller-owned so its momentum state survives across
     phases and RL iterations. When a validation set exists, each epoch log line
     also reports the UNtransformed val policy-CE and value-MSE computed in
-    eval mode.
+    eval mode. Returns one dict per epoch: ``loss`` plus ``val_ce``/``val_mse``
+    when a val split exists.
     """
     train_records, val_records = split_records(records, val_frac, val_seed)
     planes, policy, value = records_to_tensors(train_records)
@@ -328,6 +349,7 @@ def train_on_records(model, records, *, device, epochs, batch_size, optimizer,
         val_policy = val_policy.to(device)
         val_value = val_value.to(device)
 
+    history: list[dict[str, float]] = []
     for epoch in range(1, epochs + 1):
         loss = train_epoch(model, optimizer, planes, policy, value, device,
                            batch_size, value_weight)
@@ -338,10 +360,13 @@ def train_on_records(model, records, *, device, epochs, batch_size, optimizer,
                 val_ce = policy_cross_entropy(val_logits, val_policy).item()
                 val_mse = value_mse(val_pred, val_value).item()
             model.train()
+            history.append({"loss": loss, "val_ce": val_ce, "val_mse": val_mse})
             print(f"{label} epoch {epoch}: loss {loss:.4f} "
                   f"val_ce {val_ce:.4f} val_mse {val_mse:.4f}", file=sys.stderr)
         else:
+            history.append({"loss": loss})
             print(f"{label} epoch {epoch}: loss {loss:.4f}", file=sys.stderr)
+    return history
 
 
 def export_model(model, path: Path) -> None:
@@ -512,11 +537,11 @@ def main(argv: list[str] | None = None) -> None:
             export_model(model, checkpoint)
             evaluate_checkpoint(checkpoint, f"rl{it}")
 
-    print(f"done: best model at {outdir / 'model.gnn'}")
-    if args.eval_games > 0:
-        src = f", from {best_path.name}" if best_path is not None else ""
+    print(f"done: latest model at {outdir / 'model.gnn'}")
+    if args.eval_games > 0 and best_path is not None:
         print(f"done: best-by-eval at {outdir / 'model.best.gnn'} "
-              f"(winrate {best_winrate:.1%}{src})", file=sys.stderr)
+              f"(winrate {best_winrate:.1%}, from {best_path.name})",
+              file=sys.stderr)
 
 
 if __name__ == "__main__":

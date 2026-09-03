@@ -24,7 +24,7 @@ dev shell, so always prefix commands with `nix develop -c`:
 ```bash
 nix develop -c cmake -S . -B build -G Ninja   # configure
 nix develop -c cmake --build build            # build (-Wall -Wextra -Werror)
-nix develop -c ctest --test-dir build         # run the 75 tests
+nix develop -c ctest --test-dir build         # run the 76 tests
 nix run .#                                    # launch the game
 ```
 
@@ -52,7 +52,7 @@ binary (`cp resources/model.gnn build/`).
 ## Testing
 
 ```bash
-nix develop -c ctest --test-dir build   # 75 unit tests (74 Catch2 + 1 Qt Test)
+nix develop -c ctest --test-dir build   # 76 unit tests (75 Catch2 + 1 Qt Test)
 nix flake check                         # builds the package + runs the tests
 ```
 
@@ -62,7 +62,8 @@ nix flake check                         # builds the package + runs the tests
 
 You only need this if you want to train a **new** model (e.g. a stronger one,
 or a different architecture). The shipped model in `resources/model.gnn` was
-produced with exactly this pipeline.
+produced with an earlier revision of this pipeline, without the
+data-balancing and evaluation flags documented below.
 
 ### How it works
 
@@ -121,7 +122,7 @@ uv run python train.py \
 ```
 
 It should print `SL: …`, `RL1: …` and finish with
-`done: best model at .pi/smoke/model.gnn`.
+`done: latest model at .pi/smoke/model.gnn`.
 
 ### A real training run
 
